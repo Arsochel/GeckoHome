@@ -480,8 +480,7 @@
                         <div class="schedule-time">{{ '%02d'|format(s.hour|int) }}:{{ '%02d'|format(s.minute|int) }}</div>
                         <div class="schedule-meta">
                             <span class="{{ 'heat-tag' if s.lamp_type == 'heat' }}">{{ s.lamp_type | upper }}</span>
-                            {{ (s.duration_seconds // 60) }}min
-                            {% if s.duration_seconds % 60 %} {{ s.duration_seconds % 60 }}s{% endif %}
+                            {{ "%.1f"|format(s.duration_h) }}h
                             &middot; {{ s.next_run }}
                         </div>
                     </div>
@@ -533,7 +532,7 @@
             const resp = await fetch('/api/schedules', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({lamp_type: lamp, hour, minute, duration_seconds: duration * 60})
+                body: JSON.stringify({lamp_type: lamp, hour, minute, duration_h: duration})
             });
             if (resp.ok) location.reload();
             else alert('Error: ' + (await resp.json()).detail);
