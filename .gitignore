@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+gecko.db
+snapshot.json
+tinytuya.json
+tuya-raw.json
+devices.json
+*.mp3
+.claude/

@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+itsdangerous
+tuya-connector-python
+apscheduler
+aiosqlite
+python-telegram-bot
+python-dotenv
