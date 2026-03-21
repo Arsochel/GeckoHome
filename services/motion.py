@@ -11,7 +11,7 @@ os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "-8"
 import cv2
 import httpx
 
-from config import CAMERA_RTSP_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMIN
+from config import CAMERA_RTSP_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS
 import shutil
 
 from database import save_photo, add_motion_event, set_gecko_state
@@ -49,54 +49,53 @@ _TG = lambda method: f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}
 
 async def _send_photo_with_approval(photo_bytes: bytes, caption: str) -> str | None:
     """Send photo to super admin with Опубликовать/Пропустить buttons. Returns photo_file_id."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_SUPER_ADMIN:
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_SUPER_ADMINS:
         return None
-    # Save to DB first to get an ID, then update with file_id
     event_id = await add_motion_event("", caption)
     keyboard = json.dumps({"inline_keyboard": [[
         {"text": "✅ Опубликовать", "callback_data": f"motion_pub_{event_id}"},
         {"text": "❌ Пропустить",   "callback_data": f"motion_skip_{event_id}"},
     ]]})
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                _TG("sendPhoto"),
-                data={"chat_id": TELEGRAM_SUPER_ADMIN, "caption": caption,
-                      "reply_markup": keyboard},
-                files={"photo": ("motion.jpg", photo_bytes, "image/jpeg")},
-            )
-        data = resp.json()
-        if data.get("ok"):
-            file_id = data["result"]["photo"][-1]["file_id"]
-            # Update event with real file_id
-            from database import update_motion_status
-            async with __import__("aiosqlite").connect("gecko.db") as db:
-                await db.execute(
-                    "UPDATE motion_events SET photo_file_id = ? WHERE id = ?",
-                    (file_id, event_id),
+    file_id = None
+    for admin_id in TELEGRAM_SUPER_ADMINS:
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    _TG("sendPhoto"),
+                    data={"chat_id": admin_id, "caption": caption,
+                          "reply_markup": keyboard},
+                    files={"photo": ("motion.jpg", photo_bytes, "image/jpeg")},
                 )
-                await db.commit()
-            print(f"[Motion] photo sent, event_id={event_id}")
-            return file_id
-    except Exception as e:
-        print(f"[Motion] photo send error: {e}")
-    return None
+            data = resp.json()
+            if data.get("ok") and file_id is None:
+                file_id = data["result"]["photo"][-1]["file_id"]
+                async with __import__("aiosqlite").connect("gecko.db") as db:
+                    await db.execute(
+                        "UPDATE motion_events SET photo_file_id = ? WHERE id = ?",
+                        (file_id, event_id),
+                    )
+                    await db.commit()
+                print(f"[Motion] photo sent, event_id={event_id}")
+        except Exception as e:
+            print(f"[Motion] photo send error: {e}")
+    return file_id
 
 
 async def _send_telegram_video(video_path: str, caption: str):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_SUPER_ADMIN:
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_SUPER_ADMINS:
         return
-    try:
-        async with httpx.AsyncClient(timeout=90) as client:
-            with open(video_path, "rb") as f:
-                await client.post(
-                    _TG("sendVideo"),
-                    data={"chat_id": TELEGRAM_SUPER_ADMIN, "caption": caption},
-                    files={"video": ("motion.mp4", f, "video/mp4")},
-                )
-        print("[Motion] video sent to Telegram")
-    except Exception as e:
-        print(f"[Motion] Telegram send error: {e}")
+    for admin_id in TELEGRAM_SUPER_ADMINS:
+        try:
+            async with httpx.AsyncClient(timeout=90) as client:
+                with open(video_path, "rb") as f:
+                    await client.post(
+                        _TG("sendVideo"),
+                        data={"chat_id": admin_id, "caption": caption},
+                        files={"video": ("motion.mp4", f, "video/mp4")},
+                    )
+            print("[Motion] video sent to Telegram")
+        except Exception as e:
+            print(f"[Motion] Telegram send error: {e}")
 
 
 def _compile_video_sync(snapshot_paths: list[str]) -> str | None:

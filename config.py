@@ -16,14 +16,13 @@ ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
 SECRET_KEY = os.getenv("SECRET_KEY", "") or secrets.token_hex(32)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_SUPER_ADMIN = int(os.getenv("TELEGRAM_SUPER_ADMIN", "0"))
+TELEGRAM_SUPER_ADMINS: set[int] = {
+    int(x) for x in os.getenv("TELEGRAM_SUPER_ADMIN", "0").replace(",", " ").split()
+    if x.strip().isdigit() and int(x) != 0
+}
 
 CAMERA_RTSP_URL = os.getenv("CAMERA_RTSP_URL", "")
 MEDIAMTX_BIN = os.getenv("MEDIAMTX_BIN", "mediamtx")
-
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llava:7b")
-HIGHLIGHTS_INTERVAL_MIN = int(os.getenv("HIGHLIGHTS_INTERVAL_MIN", "15"))
 
 STREAM_BASE_URL = os.getenv("STREAM_BASE_URL", "http://localhost:8080")
 

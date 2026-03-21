@@ -4,7 +4,7 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from config import TELEGRAM_SUPER_ADMIN
+from config import TELEGRAM_SUPER_ADMINS
 from services import tuya, camera
 from database import (
     add_access_request, get_access_requests, remove_access_request, has_pending_request,
@@ -206,18 +206,19 @@ async def _handle_request_access(query, user):
     await add_access_request(user.id, user.username, user.first_name)
     await _safe_edit(query, "✅ Запрос отправлен!")
     name = f"@{user.username}" if user.username else user.first_name or str(user.id)
-    try:
-        await query.get_bot().send_message(
-            TELEGRAM_SUPER_ADMIN,
-            f"🔔 *Запрос доступа*\n{name} (`{user.id}`)",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅", callback_data=f"approve_{user.id}"),
-                InlineKeyboardButton("❌", callback_data=f"deny_{user.id}"),
-            ]]),
-        )
-    except Exception:
-        pass
+    for admin_id in TELEGRAM_SUPER_ADMINS:
+        try:
+            await query.get_bot().send_message(
+                admin_id,
+                f"🔔 *Запрос доступа*\n{name} (`{user.id}`)",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("✅", callback_data=f"approve_{user.id}"),
+                    InlineKeyboardButton("❌", callback_data=f"deny_{user.id}"),
+                ]]),
+            )
+        except Exception:
+            pass
 
 
 async def _handle_approve(query, ctx, data):
