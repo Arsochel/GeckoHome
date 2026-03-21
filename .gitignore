@@ -9,3 +9,4 @@ tuya-raw.json
 devices.json
 *.mp3
 .claude/
+tunnel_url.txt

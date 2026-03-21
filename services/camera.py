@@ -1,55 +1,175 @@
 import asyncio
 import os
+import subprocess
 import tempfile
 
 from config import CAMERA_RTSP_URL
 
-SNAP_PATH = os.path.join(tempfile.gettempdir(), "gecko_snap.jpg")
-CLIP_PATH = os.path.join(tempfile.gettempdir(), "gecko_clip.mp4")
+HLS_DIR = os.path.join(tempfile.gettempdir(), "gecko_hls")
+MEDIAMTX_CONFIG_PATH = os.path.join(tempfile.gettempdir(), "gecko_mediamtx.yml")
+MEDIAMTX_PORT = 8889
+MEDIAMTX_RTSP_PORT = 8554  # локальный RTSP-реестрим для клипов/снапшотов
+
+
+def _source_url() -> str:
+    """Использует локальный mediamtx если запущен, иначе прямой RTSP."""
+    if _mediamtx_proc is not None and _mediamtx_proc.poll() is None:
+        return f"rtsp://localhost:{MEDIAMTX_RTSP_PORT}/gecko"
+    return CAMERA_RTSP_URL
+
+_hls_proc: subprocess.Popen | None = None
+_mediamtx_proc: subprocess.Popen | None = None
 
 
 def is_configured() -> bool:
     return bool(CAMERA_RTSP_URL)
 
 
+def _run_ffmpeg(args: list, timeout: int) -> subprocess.CompletedProcess:
+    args = [args[0], "-loglevel", "error"] + args[1:]
+    return subprocess.run(args, capture_output=True, timeout=timeout)
+
+
 async def snapshot() -> str | None:
     if not CAMERA_RTSP_URL:
         return None
+    fd, path = tempfile.mkstemp(suffix=".jpg", prefix="gecko_snap_")
+    os.close(fd)
     try:
-        proc = await asyncio.create_subprocess_exec(
+        result = await asyncio.to_thread(_run_ffmpeg, [
             "ffmpeg", "-y", "-rtsp_transport", "tcp",
-            "-i", CAMERA_RTSP_URL,
-            "-frames:v", "1", "-q:v", "2",
-            SNAP_PATH,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await asyncio.wait_for(proc.wait(), timeout=10)
-        if os.path.exists(SNAP_PATH) and os.path.getsize(SNAP_PATH) > 0:
-            return SNAP_PATH
+            "-i", _source_url(),
+            "-frames:v", "1", "-update", "1", "-q:v", "2",
+            "-vf", "transpose=1",
+            path,
+        ], 15)
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            return path
+        print(f"[Camera] Snapshot failed:\n{result.stderr.decode()[-500:]}")
     except Exception as e:
         print(f"[Camera] Snapshot error: {e}")
     return None
 
 
-async def clip(duration: int = 15) -> str | None:
+async def clip(duration: int = 30) -> str | None:
     if not CAMERA_RTSP_URL:
         return None
+    fd, path = tempfile.mkstemp(suffix=".mp4", prefix="gecko_clip_")
+    os.close(fd)
     try:
-        proc = await asyncio.create_subprocess_exec(
+        result = await asyncio.to_thread(_run_ffmpeg, [
             "ffmpeg", "-y", "-rtsp_transport", "tcp",
-            "-i", CAMERA_RTSP_URL,
+            "-i", _source_url(),
             "-t", str(duration),
-            "-c:v", "libx264", "-preset", "ultrafast",
-            "-c:a", "aac", "-b:a", "128k",
+            "-vf", "transpose=1,scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-an",
             "-movflags", "+faststart",
-            CLIP_PATH,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await asyncio.wait_for(proc.wait(), timeout=duration + 15)
-        if os.path.exists(CLIP_PATH) and os.path.getsize(CLIP_PATH) > 0:
-            return CLIP_PATH
+            path,
+        ], duration + 40)
+        if result.returncode == 0 and os.path.exists(path) and os.path.getsize(path) > 0:
+            return path
+        print(f"[Camera] Clip failed:\n{result.stderr.decode()[-500:]}")
     except Exception as e:
         print(f"[Camera] Clip error: {e}")
     return None
+
+
+async def start_hls():
+    global _hls_proc
+    if not CAMERA_RTSP_URL:
+        return
+    os.makedirs(HLS_DIR, exist_ok=True)
+    playlist = os.path.join(HLS_DIR, "stream.m3u8")
+    _hls_proc = subprocess.Popen(
+        [
+            "ffmpeg", "-y", "-rtsp_transport", "tcp",
+            "-i", CAMERA_RTSP_URL,
+            "-vf", "transpose=1",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-g", "30", "-keyint_min", "30", "-sc_threshold", "0",
+            "-metadata:s:v:0", "rotate=0",
+            "-an",
+            "-f", "hls",
+            "-hls_time", "2",
+            "-hls_list_size", "5",
+            "-hls_flags", "delete_segments+append_list",
+            "-hls_segment_filename", os.path.join(HLS_DIR, "seg%03d.ts"),
+            playlist,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    print(f"[Camera] HLS stream started, PID={_hls_proc.pid}")
+
+
+async def stop_hls():
+    global _hls_proc
+    if _hls_proc:
+        try:
+            _hls_proc.terminate()
+            _hls_proc.wait(timeout=1)
+        except Exception:
+            pass
+        _hls_proc = None
+        print("[Camera] HLS stream stopped")
+
+
+def hls_ready() -> bool:
+    playlist = os.path.join(HLS_DIR, "stream.m3u8")
+    return os.path.exists(playlist) and os.path.getsize(playlist) > 0
+
+
+def _write_mediamtx_config():
+    config = (
+        "logLevel: error\n"
+        "api: no\n"
+        "metrics: no\n"
+        "pprof: no\n"
+        "rtsp: yes\n"
+        f"rtspAddress: :{MEDIAMTX_RTSP_PORT}\n"
+        "rtmp: no\n"
+        "srt: no\n"
+        "hls: no\n"
+        "webrtc: yes\n"
+        f"webrtcAddress: :{MEDIAMTX_PORT}\n"
+        "paths:\n"
+        "  gecko:\n"
+        f"    source: {CAMERA_RTSP_URL}\n"
+    )
+    with open(MEDIAMTX_CONFIG_PATH, "w") as f:
+        f.write(config)
+
+
+async def start_mediamtx(bin_path: str):
+    global _mediamtx_proc
+    if not CAMERA_RTSP_URL or not bin_path:
+        return
+    _write_mediamtx_config()
+    _mediamtx_proc = subprocess.Popen(
+        [bin_path, MEDIAMTX_CONFIG_PATH],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    print(f"[Camera] mediamtx started, PID={_mediamtx_proc.pid}")
+
+
+async def stop_mediamtx():
+    global _mediamtx_proc
+    if _mediamtx_proc:
+        try:
+            _mediamtx_proc.terminate()
+            _mediamtx_proc.wait(timeout=3)
+        except Exception:
+            try:
+                _mediamtx_proc.kill()
+            except Exception:
+                pass
+        _mediamtx_proc = None
+        print("[Camera] mediamtx stopped")
+
+
+def mediamtx_ready() -> bool:
+    return _mediamtx_proc is not None and _mediamtx_proc.poll() is None

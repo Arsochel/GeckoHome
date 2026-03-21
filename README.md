@@ -1,27 +1,31 @@
 # Gecko Home
 
-Smart home system for leopard gecko. Controls UV/heat lamps, monitors temperature and humidity, streams camera — via web panel and Telegram bot.
+Система автоматизации террариума для леопардового геккона. Управление лампами, мониторинг температуры и влажности, стрим камеры — через веб-панель и Telegram бот.
 
 ## Stack
 
 - **Backend:** FastAPI + APScheduler
 - **Database:** SQLite (aiosqlite)
-- **Smart devices:** Tuya Cloud API
-- **Camera:** RTSP via ffmpeg
-- **Bot:** python-telegram-bot
+- **Smart devices:** tinytuya (локальный LAN, без облака)
+- **Motion detection:** OpenCV
+- **Camera:** RTSP → HLS (ffmpeg) + WebRTC (mediamtx)
+- **Tunnel:** Cloudflare Quick Tunnel (внешний доступ)
+- **Bot:** python-telegram-bot + Telegram WebApp (стрим)
 
-## Project Structure
+## Structure
 
 ```
 GeckoHome/
-├── main.py               # FastAPI entry point
+├── main.py               # FastAPI, WebSocket, Cloudflare tunnel
 ├── bot.py                # Telegram bot entry point
 ├── config.py             # Config from .env
 ├── database.py           # DB schema and CRUD
 ├── services/
-│   ├── tuya.py           # Tuya API wrapper
-│   ├── camera.py         # RTSP snapshot/clip
-│   └── scheduler.py      # APScheduler jobs
+│   ├── tuya.py           # tinytuya local control
+│   ├── camera.py         # RTSP snapshot/clip/HLS/WebRTC
+│   ├── scheduler.py      # APScheduler jobs
+│   ├── motion.py         # OpenCV motion detection
+│   └── highlights.py     # Gecko state machine
 ├── routers/
 │   ├── auth.py           # Login/logout
 │   ├── admin.py          # Admin page
@@ -32,7 +36,9 @@ GeckoHome/
 │   ├── formatters.py     # Message formatting
 │   ├── keyboards.py      # Inline keyboards
 │   └── handlers.py       # Command/button handlers
-├── templates/            # Jinja2 HTML
+├── templates/
+│   ├── admin.html        # Web panel
+│   └── stream.html       # Telegram WebApp stream player
 ├── static/               # CSS, JS, sounds
 └── .env                  # Secrets (never commit)
 ```
@@ -51,114 +57,74 @@ ffmpeg must be installed and available in PATH (needed for camera).
 
 ### 2. Environment
 
-Copy `.env` and fill in your values:
-
 ```env
-TUYA_ENDPOINT=https://openapi.tuyaeu.com
-TUYA_ACCESS_ID=your_access_id
-TUYA_ACCESS_KEY=your_access_key
-
+# Tuya device IDs
 DEVICE_UV_LAMP=your_device_id
-DEVICE_HEAT_LAMP=
-DEVICE_THERMOMETER=
-DEVICE_HUMIDIFIER=
+DEVICE_HEAT_LAMP=your_device_id
 
+# tinytuya local keys (get via: python -m tinytuya wizard)
+DEVICE_UV_LAMP_IP=192.168.x.x
+DEVICE_UV_LAMP_LOCAL_KEY=your_local_key
+DEVICE_UV_LAMP_VERSION=3.5
+
+DEVICE_HEAT_LAMP_IP=192.168.x.x
+DEVICE_HEAT_LAMP_LOCAL_KEY=your_local_key
+DEVICE_HEAT_LAMP_VERSION=3.5
+
+# Web panel
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD_HASH=   # sha256 hash of your password
-SECRET_KEY=            # random hex string
+ADMIN_PASSWORD_HASH=   # bcrypt hash: python -c "import bcrypt; print(bcrypt.hashpw(b'pass', bcrypt.gensalt()).decode())"
+SECRET_KEY=            # python -c "import secrets; print(secrets.token_hex(32))"
 
+# Telegram
 TELEGRAM_BOT_TOKEN=your_bot_token
 TELEGRAM_SUPER_ADMIN=your_telegram_user_id
 
-CAMERA_RTSP_URL=       # rtsp://user:pass@ip:554/stream
+# Camera (optional)
+CAMERA_RTSP_URL=rtsp://user:pass@192.168.x.x:554/stream
 ```
 
-**Generate password hash:**
+### 3. Getting local Tuya keys
+
 ```bash
-python -c "from hashlib import sha256; print(sha256(b'your_password').hexdigest())"
+python -m tinytuya wizard
 ```
 
-**Generate SECRET_KEY:**
-```bash
-python -c "import secrets; print(secrets.token_hex(32))"
-```
-
-### 3. Tuya IoT Platform
-
-1. Register at [iot.tuya.com](https://iot.tuya.com)
-2. Create a project, pick the correct **Data Center** for your region:
-   - Europe: `https://openapi.tuyaeu.com`
-   - USA: `https://openapi.tuyaus.com`
-   - China: `https://openapi.tuyacn.com`
-   - India: `https://openapi.tuyain.com`
-3. Link your SmartLife account under **Devices → Link Tuya App Account**
-4. Copy **Access ID** and **Access Secret** to `.env`
-
-> The region in your Tuya IoT project must match the region of your SmartLife account, otherwise devices will appear offline.
+Wizard сканирует сеть и выгружает ключи. Нужен доступ к Tuya IoT Platform (iot.tuya.com) с привязанным SmartLife аккаунтом.
 
 ### 4. Telegram Bot
 
-1. Create a bot via [@BotFather](https://t.me/BotFather)
-2. Put the token in `.env` → `TELEGRAM_BOT_TOKEN`
-3. Get your Telegram user ID (send `/start` to the bot, it prints to console)
-4. Put your ID in `.env` → `TELEGRAM_SUPER_ADMIN`
+1. Создай бота через [@BotFather](https://t.me/BotFather)
+2. Токен → `.env` `TELEGRAM_BOT_TOKEN`
+3. Свой Telegram user ID → `.env` `TELEGRAM_SUPER_ADMIN`
 
-### 5. Camera (optional, Ezviz H1C or similar)
+### 5. Camera (optional)
 
-Find your RTSP URL (usually in camera settings):
-```
-rtsp://admin:password@192.168.x.x:554/h264_stream
-```
-Put it in `.env` → `CAMERA_RTSP_URL`. Camera buttons appear in the bot automatically.
+RTSP URL камеры → `.env` `CAMERA_RTSP_URL`. Кнопки камеры в боте появятся автоматически.
 
 ## Running
 
-**Web panel:**
 ```bash
+# Web panel (port 8080)
 python main.py
-# or
-uvicorn main:app --host 0.0.0.0 --port 80
-```
 
-**Telegram bot:**
-```bash
+# Telegram bot (separate process)
 python bot.py
 ```
 
-Web panel: `http://localhost` → redirects to login
-API docs: `http://localhost/docs`
+Веб-панель: `http://localhost:8080` → редирект на логин.
 
-## API Endpoints
-
-All endpoints except `/login` require authentication (session cookie).
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/` | Redirect to login |
-| GET/POST | `/login` | Auth |
-| GET | `/logout` | Logout |
-| GET | `/admin` | Admin panel |
-| POST | `/control/{action}` | Web lamp control (`uv_on`, `uv_off`, `heat_on`, `heat_off`) |
-| GET | `/temperature` | Current temperature |
-| GET | `/humidity` | Current humidity |
-| POST | `/lamp/{type}/on` | Turn lamp on |
-| POST | `/lamp/{type}/off` | Turn lamp off |
-| GET | `/device/{id}/status` | Device status |
-| GET | `/device/{id}/functions` | Device functions |
-| POST | `/api/schedules` | Create schedule |
-| DELETE | `/api/schedules/{id}` | Delete schedule |
-| POST | `/api/schedules/{id}/toggle` | Pause/resume schedule |
+При старте автоматически поднимается Cloudflare Quick Tunnel — URL пишется в консоль и используется для Telegram WebApp стрима.
 
 ## Troubleshooting
 
-**Token invalid:**
-- Check that `TUYA_ENDPOINT` matches the region of your Tuya IoT project
-- Ensure the SmartLife account is linked in the Tuya IoT Platform project
-- Restart the server to force re-authentication
+**Лампы не отвечают:**
+- Проверь IP в `.env` — мог поменяться после перезагрузки роутера
+- Убедись что версия протокола совпадает: `python -m tinytuya scan`
 
-**Device offline:**
-- Device is online in SmartLife but offline via API → region mismatch between IoT project and SmartLife account
-- Check that the device appears under **Cloud → Devices** in your Tuya IoT project
+**Бот не отвечает:**
+- Telegram API заблокирован провайдером — нужен VPN или прокси
 
-**Bot timeout:**
-- Telegram API is blocked by your ISP — use a VPN or proxy
+**Стрим не работает извне:**
+- Cloudflare tunnel должен быть запущен (стартует вместе с `python main.py`)
+- Внешний доступ идёт через HLS, локальный — через WebRTC

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>🦎 Gecko Cam</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+        }
+        #overlay {
+            position: fixed; inset: 0;
+            display: flex; align-items: center; justify-content: center;
+            color: #fff; font-family: sans-serif; font-size: 16px;
+            background: rgba(0,0,0,0.6);
+            pointer-events: none;
+        }
+        #overlay.hidden { display: none; }
+    </style>
+</head>
+<body>
+    <video id="v" autoplay muted playsinline></video>
+    <div id="overlay">Подключение...</div>
+    <script>
+    const v = document.getElementById('v');
+    const overlay = document.getElementById('overlay');
+    const base = window.location.origin;
+
+    async function connectWebRTC() {
+        const pc = new RTCPeerConnection();
+        return new Promise(async (resolve, reject) => {
+            pc.ontrack = e => {
+                v.srcObject = e.streams[0];
+                overlay.classList.add('hidden');
+                resolve();
+            };
+            pc.addTransceiver('video', { direction: 'recvonly' });
+            pc.addTransceiver('audio', { direction: 'recvonly' });
+            await pc.setLocalDescription();
+            const r = await fetch(base + '/api/stream/whep', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/sdp' },
+                body: pc.localDescription.sdp,
+            });
+            if (!r.ok) { pc.close(); reject(new Error('whep ' + r.status)); return; }
+            await pc.setRemoteDescription({ type: 'answer', sdp: await r.text() });
+            pc.onconnectionstatechange = () => {
+                if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                    pc.close();
+                    reject(new Error('disconnected'));
+                }
+            };
+            setTimeout(() => {
+                if (pc.connectionState !== 'connected') {
+                    pc.close();
+                    reject(new Error('timeout'));
+                }
+            }, 5000);
+        });
+    }
+
+    function connectHLS() {
+        const src = base + '/hls/stream.m3u8';
+        if (Hls.isSupported()) {
+            const hls = new Hls({ lowLatencyMode: true });
+            hls.loadSource(src);
+            hls.attachMedia(v);
+            hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                v.play();
+                overlay.classList.add('hidden');
+            });
+            hls.on(Hls.Events.ERROR, (_, data) => {
+                if (data.fatal) {
+                    overlay.classList.remove('hidden');
+                    overlay.textContent = 'HLS ошибка: ' + data.type + ' / ' + data.details;
+                    setTimeout(connectHLS, 5000);
+                }
+            });
+        } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
+            v.src = src;
+            v.addEventListener('loadedmetadata', () => {
+                v.play();
+                overlay.classList.add('hidden');
+            });
+        }
+    }
+
+    function isLocal() {
+        const h = window.location.hostname;
+        return h === 'localhost' || h === '127.0.0.1' || h.startsWith('192.168.') || h.startsWith('10.');
+    }
+
+    async function connect() {
+        if (isLocal()) {
+            try { await connectWebRTC(); return; } catch(e) {}
+        }
+        connectHLS();
+    }
+
+    connect();
+
+    if (window.Telegram?.WebApp?.initData) {
+        fetch(base + '/api/stream/view', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({initData: window.Telegram.WebApp.initData}),
+        }).catch(() => {});
+    }
+    </script>
+</body>
+</html>

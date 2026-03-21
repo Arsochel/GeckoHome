@@ -4,552 +4,179 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gecko Home</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        body {
-            min-height: 100vh;
-            background: #0a0f0a;
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            color: #e0e0e0;
-        }
-
-        /* ── Header ── */
-        .header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 16px 28px;
-            border-bottom: 1px solid #1a251a;
-            background: #0e140e;
-        }
-        .header-left {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .header-left span.icon { font-size: 24px; }
-        .header-left h1 { font-size: 18px; font-weight: 600; color: #d0d0d0; }
-        .btn-logout {
-            padding: 6px 16px;
-            background: transparent;
-            border: 1px solid #2a2a2a;
-            border-radius: 8px;
-            color: #808080;
-            font-size: 13px;
-            cursor: pointer;
-            text-decoration: none;
-            transition: all 0.2s;
-        }
-        .btn-logout:hover { border-color: #ef4444; color: #ef4444; }
-
-        /* ── Layout ── */
-        .container {
-            max-width: 960px;
-            margin: 0 auto;
-            padding: 24px 20px 48px;
-        }
-
-        .grid-2 {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-        }
-
-        .section-title {
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            color: #4a6a4a;
-            margin-bottom: 12px;
-            margin-top: 28px;
-        }
-        .section-title:first-child { margin-top: 0; }
-
-        /* ── Cards ── */
-        .card {
-            background: #141a14;
-            border: 1px solid #1e2e1e;
-            border-radius: 14px;
-            padding: 20px;
-            transition: border-color 0.2s;
-        }
-        .card:hover { border-color: #2a3e2a; }
-
-        .card-label {
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: #5a7a5a;
-            margin-bottom: 8px;
-        }
-
-        .card-value {
-            font-size: 32px;
-            font-weight: 700;
-            color: #f0f0f0;
-        }
-        .card-value .unit {
-            font-size: 16px;
-            font-weight: 400;
-            color: #606060;
-        }
-
-        /* ── Lamp cards ── */
-        .lamp-card {
-            background: #141a14;
-            border: 1px solid #1e2e1e;
-            border-radius: 14px;
-            padding: 20px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .lamp-info {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-        }
-
-        .lamp-icon {
-            width: 44px;
-            height: 44px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-        }
-        .lamp-icon.uv { background: rgba(139, 92, 246, 0.15); }
-        .lamp-icon.heat { background: rgba(249, 115, 22, 0.15); }
-
-        .lamp-name {
-            font-size: 15px;
-            font-weight: 600;
-            color: #d0d0d0;
-        }
-
-        .lamp-status {
-            font-size: 12px;
-            color: #606060;
-            margin-top: 2px;
-        }
-
-        .status-dot {
-            display: inline-block;
-            width: 7px;
-            height: 7px;
-            border-radius: 50%;
-            margin-right: 5px;
-            vertical-align: middle;
-        }
-        .status-dot.on { background: #22c55e; box-shadow: 0 0 6px rgba(34, 197, 94, 0.4); }
-        .status-dot.off { background: #ef4444; }
-        .status-dot.unknown { background: #555; }
-
-        .lamp-controls {
-            display: flex;
-            gap: 8px;
-        }
-
-        .btn {
-            padding: 8px 18px;
-            border: none;
-            border-radius: 8px;
-            font-size: 13px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.15s;
-        }
-        .btn:active { transform: scale(0.96); }
-
-        .btn-on {
-            background: rgba(34, 197, 94, 0.15);
-            color: #22c55e;
-            border: 1px solid rgba(34, 197, 94, 0.2);
-        }
-        .btn-on:hover { background: rgba(34, 197, 94, 0.25); }
-
-        .btn-off {
-            background: rgba(239, 68, 68, 0.1);
-            color: #ef4444;
-            border: 1px solid rgba(239, 68, 68, 0.15);
-        }
-        .btn-off:hover { background: rgba(239, 68, 68, 0.2); }
-
-        /* ── Schedules ── */
-        .schedule-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 14px;
-        }
-
-        .btn-add {
-            padding: 6px 14px;
-            background: rgba(34, 197, 94, 0.12);
-            color: #22c55e;
-            border: 1px solid rgba(34, 197, 94, 0.2);
-            border-radius: 8px;
-            font-size: 13px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .btn-add:hover { background: rgba(34, 197, 94, 0.22); }
-
-        .schedule-form {
-            display: none;
-            background: #111711;
-            border: 1px solid #1e2e1e;
-            border-radius: 12px;
-            padding: 18px;
-            margin-bottom: 14px;
-        }
-        .schedule-form.open { display: block; }
-
-        .form-row {
-            display: flex;
-            gap: 12px;
-            align-items: end;
-            flex-wrap: wrap;
-        }
-        .form-field label {
-            display: block;
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: #5a7a5a;
-            margin-bottom: 6px;
-        }
-        .form-field select,
-        .form-field input {
-            padding: 9px 12px;
-            background: #0a0f0a;
-            border: 1px solid #1e2e1e;
-            border-radius: 8px;
-            color: #e0e0e0;
-            font-size: 14px;
-            outline: none;
-        }
-        .form-field select:focus,
-        .form-field input:focus {
-            border-color: #22c55e;
-        }
-
-        .btn-save {
-            padding: 9px 20px;
-            background: #22c55e;
-            color: #000;
-            border: none;
-            border-radius: 8px;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .btn-save:hover { background: #16a34a; }
-
-        .schedule-list {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .schedule-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 14px 18px;
-            background: #141a14;
-            border: 1px solid #1e2e1e;
-            border-radius: 12px;
-        }
-        .schedule-item.paused { opacity: 0.5; }
-
-        .schedule-left {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .schedule-time {
-            font-size: 22px;
-            font-weight: 700;
-            font-variant-numeric: tabular-nums;
-            color: #f0f0f0;
-        }
-
-        .schedule-meta {
-            font-size: 12px;
-            color: #606060;
-        }
-        .schedule-meta span {
-            display: inline-block;
-            padding: 2px 8px;
-            background: rgba(139, 92, 246, 0.1);
-            border-radius: 4px;
-            color: #a78bfa;
-            font-weight: 500;
-            margin-right: 6px;
-        }
-        .schedule-meta span.heat-tag {
-            background: rgba(249, 115, 22, 0.1);
-            color: #fb923c;
-        }
-
-        .schedule-actions {
-            display: flex;
-            gap: 6px;
-        }
-
-        .btn-icon {
-            width: 34px;
-            height: 34px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: transparent;
-            border: 1px solid #1e2e1e;
-            border-radius: 8px;
-            color: #808080;
-            cursor: pointer;
-            font-size: 14px;
-            transition: all 0.15s;
-        }
-        .btn-icon:hover { border-color: #3a4a3a; color: #c0c0c0; }
-        .btn-icon.danger:hover { border-color: #ef4444; color: #ef4444; }
-
-        /* ── Tuya status ── */
-        .tuya-bar {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            padding: 12px 18px;
-            background: #111711;
-            border: 1px solid #1e2e1e;
-            border-radius: 10px;
-            font-size: 12px;
-            color: #606060;
-        }
-        .tuya-bar code {
-            color: #808080;
-            background: #0a0f0a;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-        .tuya-dot {
-            width: 7px; height: 7px;
-            border-radius: 50%;
-            display: inline-block;
-        }
-        .tuya-dot.valid { background: #22c55e; }
-        .tuya-dot.invalid { background: #ef4444; }
-
-        .empty-state {
-            text-align: center;
-            padding: 24px;
-            color: #404040;
-            font-size: 13px;
-        }
-
-        /* ── Responsive ── */
-        @media (max-width: 640px) {
-            .grid-2 { grid-template-columns: 1fr; }
-            .lamp-card { flex-direction: column; align-items: flex-start; gap: 14px; }
-            .form-row { flex-direction: column; }
-            .schedule-item { flex-direction: column; align-items: flex-start; gap: 10px; }
-        }
-    </style>
+    <link rel="stylesheet" href="/static/admin.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body>
-    <div class="header">
-        <div class="header-left">
-            <span class="icon">🦎</span>
-            <h1>Gecko Home</h1>
+<div class="header">
+    <div class="header-left">
+        <span>🦎</span>
+        <h1>Gecko Home</h1>
+    </div>
+    <a href="/logout" class="btn-logout">Sign out</a>
+</div>
+
+<div class="container">
+<div class="page-grid">
+
+    <!-- Stream -->
+    <div class="stream-col">
+        <div class="card no-hover" style="padding:14px">
+            <div class="label">Live</div>
+            <div class="stream-wrap" id="stream-wrap">
+                <video id="stream-video" class="stream-video" autoplay muted playsinline disablePictureInPicture></video>
+                <canvas id="pip-canvas" style="display:none"></canvas>
+                <div id="stream-overlay" class="stream-overlay">Connecting...</div>
+                <button class="stream-pip-btn" onclick="togglePiP()" title="Picture in Picture"><i data-lucide="picture-in-picture"></i></button>
+                <button class="stream-fs-btn" onclick="toggleFullscreen()"><i data-lucide="maximize"></i></button>
+            </div>
         </div>
-        <a href="/logout" class="btn-logout">Sign out</a>
     </div>
 
-    <div class="container">
-        <!-- Sensors -->
-        <div class="section-title">Environment</div>
+    <!-- Main content -->
+    <div>
+
+        <div class="title" style="margin-top:0">Environment</div>
         <div class="grid-2">
             <div class="card">
-                <div class="card-label">Temperature</div>
+                <div class="label">Temperature</div>
                 <div class="card-value">{{ temperature }}<span class="unit">&deg;C</span></div>
             </div>
             <div class="card">
-                <div class="card-label">Humidity</div>
+                <div class="label">Humidity</div>
                 <div class="card-value">{{ humidity }}<span class="unit">%</span></div>
             </div>
         </div>
 
-        <!-- Lamps -->
-        <div class="section-title">Devices</div>
+        <div class="title">Devices</div>
         <div class="grid-2">
-            <div class="lamp-card">
+            {% for lamp_id, icon, name, status in [
+                ('uv',   'zap',   'UV Lamp',   uv_status),
+                ('heat', 'flame', 'Heat Lamp', heat_status)
+            ] %}
+            <div class="card lamp-card no-hover">
                 <div class="lamp-info">
-                    <div class="lamp-icon uv">💜</div>
+                    <div class="lamp-icon {{ lamp_id }}"><i data-lucide="{{ icon }}"></i></div>
                     <div>
-                        <div class="lamp-name">UV Lamp</div>
-                        <div class="lamp-status">
-                            {% if uv_status.switch is not none %}
-                                <span class="status-dot {{ 'on' if uv_status.switch else 'off' }}"></span>
-                                {{ 'On' if uv_status.switch else 'Off' }}
-                            {% else %}
-                                <span class="status-dot unknown"></span>Unknown
-                            {% endif %}
+                        <div class="lamp-name">{{ name }}</div>
+                        <div class="lamp-status" id="{{ lamp_id }}-status">
+                            <span class="dot {{ 'on' if status.switch else 'off' if status.switch is not none else '' }}"></span>
+                            {{ 'On' if status.switch else ('Off' if status.switch is not none else 'Unknown') }}
                         </div>
                     </div>
                 </div>
                 <div class="lamp-controls">
-                    <form method="post" action="/control/uv_on">
-                        <button type="submit" class="btn btn-on">On</button>
-                    </form>
-                    <form method="post" action="/control/uv_off">
-                        <button type="submit" class="btn btn-off">Off</button>
-                    </form>
+                    <button class="btn {{ 'btn-off' if status.switch else 'btn-on' }}"
+                            id="{{ lamp_id }}-toggle"
+                            data-state="{{ 'on' if status.switch else 'off' }}"
+                            onclick="toggleLamp('{{ lamp_id }}', this)">
+                        <i data-lucide="power"></i>{{ 'Выкл' if status.switch else 'Вкл' }}
+                    </button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="title">Camera</div>
+        <div class="card cam-card no-hover">
+            <div class="cam-btns">
+                <button class="btn btn-on  cam-btn" id="snap-btn" onclick="camCapture('snapshot')"><i data-lucide="camera"></i> Snapshot</button>
+                <button class="btn btn-clip cam-btn" id="clip-btn" onclick="camCapture('clip')"><i data-lucide="video"></i> 30s Clip</button>
+                <button class="btn btn-clip cam-btn" id="clip3-btn" onclick="camCapture('clip3')"><i data-lucide="film"></i> 3 мин</button>
+            </div>
+            <div id="cam-status" class="cam-status"></div>
+            <div class="cam-preview">
+                <img id="snap-img" />
+                <div id="clip-wrap" class="cam-preview-wrap">
+                    <video id="clip-video" controls></video>
+                </div>
+            </div>
+        </div>
+
+        <div class="title">Schedules</div>
+        <div class="card no-hover sched-card">
+            <div class="sched-header">
+                <span class="label" style="margin:0">Расписания</span>
+                <button class="btn-add" onclick="document.getElementById('addForm').classList.toggle('open')"><i data-lucide="plus"></i> Добавить</button>
+            </div>
+
+            <div class="sched-form" id="addForm">
+                <div class="form-row">
+                    <div class="form-field">
+                        <label>Лампа</label>
+                        <select id="new-lamp"><option value="uv">UV</option><option value="heat">Тепловая</option></select>
+                    </div>
+                    <div class="form-field">
+                        <label>Время</label>
+                        <input type="time" id="new-time" value="00:00">
+                    </div>
+                    <div class="form-field">
+                        <label>Длительность (мин)</label>
+                        <input type="number" id="new-dur" value="1" min="1" style="width:80px">
+                    </div>
+                    <div class="form-field">
+                        <label>&nbsp;</label>
+                        <button class="btn-save" onclick="addSchedule()">Сохранить</button>
+                    </div>
                 </div>
             </div>
 
-            <div class="lamp-card">
-                <div class="lamp-info">
-                    <div class="lamp-icon heat">🔥</div>
-                    <div>
-                        <div class="lamp-name">Heat Lamp</div>
-                        <div class="lamp-status">
-                            {% if heat_status.switch is not none %}
-                                <span class="status-dot {{ 'on' if heat_status.switch else 'off' }}"></span>
-                                {{ 'On' if heat_status.switch else 'Off' }}
-                            {% else %}
-                                <span class="status-dot unknown"></span>Unknown
-                            {% endif %}
+            <div class="sched-list">
+                {% if schedules %}
+                    {% for s in schedules %}
+                    <div class="sched-item {{ 'paused' if s.paused }}" id="row-{{ s.id }}">
+                        <div class="sched-left">
+                            <div class="sched-time">{{ '%02d:%02d'|format(s.hour|int, s.minute|int) }}</div>
+                            <div class="sched-meta">
+                                <span class="{{ 'heat' if s.lamp_type == 'heat' }}">{{ s.lamp_type|upper }}</span>
+                                {{ "%.1f"|format(s.duration_h) }}h &middot; {{ s.next_run }}
+                            </div>
+                        </div>
+                        <div class="sched-actions">
+                            <button class="btn-icon" onclick="toggleSchedule('{{ s.id }}')" title="{{ 'Resume' if s.paused else 'Pause' }}"><i data-lucide="{{ 'play' if s.paused else 'pause' }}"></i></button>
+                            <button class="btn-icon del" onclick="deleteSchedule('{{ s.id }}')" title="Delete"><i data-lucide="x"></i></button>
                         </div>
                     </div>
-                </div>
-                <div class="lamp-controls">
-                    <form method="post" action="/control/heat_on">
-                        <button type="submit" class="btn btn-on">On</button>
-                    </form>
-                    <form method="post" action="/control/heat_off">
-                        <button type="submit" class="btn btn-off">Off</button>
-                    </form>
-                </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="empty">Расписания не настроены</div>
+                {% endif %}
             </div>
         </div>
 
-        <!-- Schedules -->
-        <div class="schedule-header">
-            <div class="section-title" style="margin:0">Schedules</div>
-            <button class="btn-add" onclick="toggleForm()">+ Add</button>
+        <div class="title">Gallery</div>
+        <div class="gallery-grid" id="gallery"></div>
+        <div id="gallery-more-wrap" style="text-align:center;margin-top:12px;display:none">
+            <button class="btn-add" onclick="loadGallery()"><i data-lucide="image"></i> Загрузить ещё</button>
         </div>
 
-        <div class="schedule-form" id="addForm">
-            <div class="form-row">
-                <div class="form-field">
-                    <label>Lamp</label>
-                    <select id="new-lamp">
-                        <option value="uv">UV</option>
-                        <option value="heat">Heat</option>
-                    </select>
-                </div>
-                <div class="form-field">
-                    <label>Time</label>
-                    <input type="time" id="new-time" value="00:00">
-                </div>
-                <div class="form-field">
-                    <label>Duration (min)</label>
-                    <input type="number" id="new-duration" value="1" min="1" style="width:80px">
-                </div>
-                <div class="form-field">
-                    <label>&nbsp;</label>
-                    <button class="btn-save" onclick="addSchedule()">Save</button>
-                </div>
+        <div class="title">Devices</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+            {% for d in devices %}
+            <div class="bar">
+                <span class="bar-dot {{ 'ok' if d.online else ('err' if d.id else 'na') }}"></span>
+                <span>{{ d.name }}</span>
+                {% if d.id %}
+                    <code style="font-size:11px;opacity:0.5">{{ d.id }}</code>
+                    <span>{{ 'Online' if d.online else 'Offline' }}</span>
+                {% else %}
+                    <span style="opacity:0.4">Not configured</span>
+                {% endif %}
             </div>
+            {% endfor %}
         </div>
 
-        <div class="schedule-list">
-            {% if schedules %}
-                {% for s in schedules %}
-                <div class="schedule-item {{ 'paused' if s.paused }}" id="row-{{ s.id }}">
-                    <div class="schedule-left">
-                        <div class="schedule-time">{{ '%02d'|format(s.hour|int) }}:{{ '%02d'|format(s.minute|int) }}</div>
-                        <div class="schedule-meta">
-                            <span class="{{ 'heat-tag' if s.lamp_type == 'heat' }}">{{ s.lamp_type | upper }}</span>
-                            {{ "%.1f"|format(s.duration_h) }}h
-                            &middot; {{ s.next_run }}
-                        </div>
-                    </div>
-                    <div class="schedule-actions">
-                        <button class="btn-icon" onclick="toggleSchedule('{{ s.id }}')" title="{{ 'Resume' if s.paused else 'Pause' }}">
-                            {{ '▶' if s.paused else '⏸' }}
-                        </button>
-                        <button class="btn-icon danger" onclick="deleteSchedule('{{ s.id }}')" title="Delete">✕</button>
-                    </div>
-                </div>
-                {% endfor %}
-            {% else %}
-                <div class="empty-state">No schedules configured</div>
-            {% endif %}
-        </div>
-
-        <!-- Tuya status -->
-        <div class="section-title">Connection</div>
-        <div class="tuya-bar">
-            <span class="tuya-dot {{ 'valid' if tuya_token else 'invalid' }}"></span>
-            Tuya API
-            <code>{{ tuya_endpoint }}</code>
-            <span>{{ 'Connected' if tuya_token else 'Disconnected' }}</span>
-        </div>
     </div>
+</div>
+</div>
 
-    <audio id="clickSound" src="/static/lizard-button.mp3" preload="auto"></audio>
-    <script>
-        document.querySelectorAll('.btn-on, .btn-off').forEach(btn => {
-            btn.closest('form').addEventListener('submit', function(e) {
-                e.preventDefault();
-                const form = this;
-                const s = document.getElementById('clickSound');
-                s.currentTime = 0;
-                s.play();
-                s.onended = () => form.submit();
-            });
-        });
+<div id="lightbox" class="lightbox" onclick="closeLightbox()">
+    <img id="lightbox-img" />
+    <button class="lightbox-del" onclick="deleteLightboxPhoto(event)"><i data-lucide="trash-2"></i></button>
+</div>
 
-        function toggleForm() {
-            document.getElementById('addForm').classList.toggle('open');
-        }
-
-        async function addSchedule() {
-            const lamp = document.getElementById('new-lamp').value;
-            const time = document.getElementById('new-time').value;
-            const duration = parseInt(document.getElementById('new-duration').value);
-            const [hour, minute] = time.split(':').map(Number);
-            const resp = await fetch('/api/schedules', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({lamp_type: lamp, hour, minute, duration_h: duration})
-            });
-            if (resp.ok) location.reload();
-            else alert('Error: ' + (await resp.json()).detail);
-        }
-
-        async function deleteSchedule(id) {
-            if (!confirm('Delete this schedule?')) return;
-            const resp = await fetch('/api/schedules/' + id, {method: 'DELETE'});
-            if (resp.ok) document.getElementById('row-' + id).remove();
-            else alert('Error: ' + (await resp.json()).detail);
-        }
-
-        async function toggleSchedule(id) {
-            const resp = await fetch('/api/schedules/' + id + '/toggle', {method: 'POST'});
-            if (resp.ok) location.reload();
-            else alert('Error: ' + (await resp.json()).detail);
-        }
-    </script>
+<audio id="click" src="/static/lizard-button.mp3" preload="auto"></audio>
+<script src="/static/admin.js"></script>
+<script>lucide.createIcons();</script>
 </body>
 </html>

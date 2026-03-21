@@ -1,42 +1,83 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+import os
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from services import tuya, camera
 from database import get_schedules, get_allowed_users, get_access_requests
 from bot.access import is_super_admin
+from config import STREAM_BASE_URL
 
 
-def _lamp_status_icon(s: dict) -> str:
-    if s.get("switch") is True:
-        return "\U0001f7e2 ON"
-    elif s.get("switch") is False:
-        return "\U0001f534 OFF"
-    return "\u26aa N/A"
+def stream_url() -> str | None:
+    """None если URL локальный и не подходит для кнопки."""
+    tunnel_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tunnel_url.txt")
+    try:
+        with open(tunnel_file) as f:
+            base = f.read().strip()
+        if base:
+            return f"{base}/stream"
+    except FileNotFoundError:
+        pass
+    url = f"{STREAM_BASE_URL}/stream"
+    if "localhost" in url or "127.0.0.1" in url:
+        return None
+    return url
+
+
+def _stream_btn() -> InlineKeyboardButton:
+    url = stream_url()
+    if url:
+        return InlineKeyboardButton("📡 Стрим", web_app=WebAppInfo(url=url))
+    return InlineKeyboardButton("📡 Стрим (недоступен)", callback_data="noop")
+
+
+def user_keyboard() -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh")]]
+    if camera.is_configured():
+        rows.insert(0, [InlineKeyboardButton("🎥 Клип 3 мин", callback_data="cam_clip3")])
+        rows.insert(0, [
+            InlineKeyboardButton("📸 Снимок",   callback_data="cam_snap"),
+            InlineKeyboardButton("🎬 Клип 30с", callback_data="cam_clip"),
+        ])
+        btn = _stream_btn()
+        rows.insert(0, [btn if btn else InlineKeyboardButton("📡 Стрим (недоступен)", callback_data="noop")])
+    return InlineKeyboardMarkup(rows)
 
 
 def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    uv = tuya.get_lamp_status("uv")
+    if not is_super_admin(user_id):
+        return user_keyboard()
+
+    uv   = tuya.get_lamp_status("uv")
     heat = tuya.get_lamp_status("heat")
 
-    uv_btn = "\U0001f526 UV: OFF" if uv.get("switch") else "\U0001f526 UV: ON"
-    uv_data = "uv_off" if uv.get("switch") else "uv_on"
-    heat_btn = "\U0001f525 Heat: OFF" if heat.get("switch") else "\U0001f525 Heat: ON"
-    heat_data = "heat_off" if heat.get("switch") else "heat_on"
+    uv_on   = uv.get("switch") is True
+    heat_on = heat.get("switch") is True
 
     rows = [
-        [InlineKeyboardButton(uv_btn, callback_data=uv_data)],
-        [InlineKeyboardButton(heat_btn, callback_data=heat_data)],
+        [InlineKeyboardButton(
+            f"🔦 UV: {'выкл ➜ вкл' if not uv_on else 'вкл ➜ выкл'}",
+            callback_data="uv_on" if not uv_on else "uv_off",
+        )],
+        [InlineKeyboardButton(
+            f"🔥 Тепловая: {'выкл ➜ вкл' if not heat_on else 'вкл ➜ выкл'}",
+            callback_data="heat_on" if not heat_on else "heat_off",
+        )],
     ]
     if camera.is_configured():
+        btn = _stream_btn()
+        rows.append([btn if btn else InlineKeyboardButton("📡 Стрим (в разработке)", callback_data="noop")])
         rows.append([
-            InlineKeyboardButton("\U0001f4f8 Snapshot", callback_data="cam_snap"),
-            InlineKeyboardButton("\U0001f3ac Clip 15s", callback_data="cam_clip"),
+            InlineKeyboardButton("📸 Снимок",   callback_data="cam_snap"),
+            InlineKeyboardButton("🎬 Клип 30с", callback_data="cam_clip"),
         ])
+        rows.append([InlineKeyboardButton("🎥 Клип 3 мин", callback_data="cam_clip3")])
+    rows.append([InlineKeyboardButton("🍎 Покормил", callback_data="fed")])
     rows.append([
-        InlineKeyboardButton("\U0001f4cb Schedules", callback_data="schedules"),
-        InlineKeyboardButton("\U0001f504 Refresh", callback_data="refresh"),
+        InlineKeyboardButton("📋 Расписания", callback_data="schedules"),
+        InlineKeyboardButton("🔄 Обновить",   callback_data="refresh"),
     ])
-    if is_super_admin(user_id):
-        rows.append([InlineKeyboardButton("\u2699\ufe0f Admin", callback_data="admin")])
+    rows.append([InlineKeyboardButton("⚙️ Управление", callback_data="admin")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -44,46 +85,46 @@ async def schedules_keyboard() -> InlineKeyboardMarkup:
     scheds = await get_schedules()
     rows = []
     for s in scheds:
-        lamp = s["lamp_type"].upper()
+        lamp  = "🔦 UV" if s["lamp_type"] == "uv" else "🔥 Тепл."
         start = f"{s['hour']:02d}:{s['minute']:02d}"
-        end = f"{s['end_hour']:02d}:{s['end_minute']:02d}"
-        icon = "\u23f8" if s["paused"] else "\u25b6"
+        end   = f"{s['end_hour']:02d}:{s['end_minute']:02d}"
+        icon  = "⏸" if not s["paused"] else "▶️"
         rows.append([
-            InlineKeyboardButton(f"{icon} {lamp} {start}\u2192{end}", callback_data="noop"),
-            InlineKeyboardButton("\u23ef", callback_data=f"sched_toggle_{s['id']}"),
-            InlineKeyboardButton("\u274c", callback_data=f"sched_del_{s['id']}"),
+            InlineKeyboardButton(f"{lamp}  {start} → {end}", callback_data="noop"),
+            InlineKeyboardButton(icon, callback_data=f"sched_toggle_{s['id']}"),
+            InlineKeyboardButton("✕",  callback_data=f"sched_del_{s['id']}"),
         ])
-    rows.append([InlineKeyboardButton("\u2795 New Schedule", callback_data="sched_new")])
-    rows.append([InlineKeyboardButton("\u25c0 Back", callback_data="back_main")])
+    rows.append([InlineKeyboardButton("➕ Новое расписание", callback_data="sched_new")])
+    rows.append([InlineKeyboardButton("◀ Назад",             callback_data="back_main")])
     return InlineKeyboardMarkup(rows)
 
 
 async def admin_keyboard() -> InlineKeyboardMarkup:
-    users = await get_allowed_users()
+    users    = await get_allowed_users()
     requests = await get_access_requests()
     rows = []
 
     if requests:
-        rows.append([InlineKeyboardButton("\u23f3 Pending Requests", callback_data="noop")])
+        rows.append([InlineKeyboardButton("⏳ Запросы доступа", callback_data="noop")])
         for r in requests:
             name = f"@{r['username']}" if r.get("username") else r.get("first_name") or str(r["user_id"])
             rows.append([
                 InlineKeyboardButton(name, callback_data="noop"),
-                InlineKeyboardButton("\u2705", callback_data=f"approve_{r['user_id']}"),
-                InlineKeyboardButton("\u274c", callback_data=f"deny_{r['user_id']}"),
+                InlineKeyboardButton("✅", callback_data=f"approve_{r['user_id']}"),
+                InlineKeyboardButton("❌", callback_data=f"deny_{r['user_id']}"),
             ])
 
-    rows.append([InlineKeyboardButton("\U0001f465 Allowed Users", callback_data="noop")])
+    rows.append([InlineKeyboardButton("👥 Пользователи", callback_data="noop")])
     if users:
         for u in users:
-            label = f"@{u['username']}" if u.get("username") else str(u["user_id"])
+            label = f"@{u['username']}" if u.get("username") else (u.get("first_name") or str(u["user_id"]))
             rows.append([
-                InlineKeyboardButton(label, callback_data="noop"),
-                InlineKeyboardButton("\U0001f5d1", callback_data=f"rm_user_{u['user_id']}"),
+                InlineKeyboardButton(label,  callback_data="noop"),
+                InlineKeyboardButton("🗑",   callback_data=f"rm_user_{u['user_id']}"),
             ])
     else:
-        rows.append([InlineKeyboardButton("No users yet", callback_data="noop")])
+        rows.append([InlineKeyboardButton("Нет пользователей", callback_data="noop")])
 
-    rows.append([InlineKeyboardButton("\u2795 Add by ID", callback_data="add_user")])
-    rows.append([InlineKeyboardButton("\u25c0 Back", callback_data="back_main")])
+    rows.append([InlineKeyboardButton("➕ Добавить по ID", callback_data="add_user")])
+    rows.append([InlineKeyboardButton("◀ Назад",           callback_data="back_main")])
     return InlineKeyboardMarkup(rows)

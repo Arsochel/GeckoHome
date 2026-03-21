@@ -3,6 +3,7 @@ import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from services import tuya
+from services.highlights import update_gecko_state
 from config import DEVICE_IDS
 from database import get_schedules, save_schedule, log_lamp_event, log_sensor_reading
 
@@ -42,6 +43,7 @@ async def load_schedules():
             scheduler.get_job(s["id"]).pause()
 
     scheduler.add_job(record_sensor_readings, "interval", minutes=30, id="sensor_readings")
+    scheduler.add_job(update_gecko_state, "interval", minutes=2, id="gecko_state")
 
 
 def start():

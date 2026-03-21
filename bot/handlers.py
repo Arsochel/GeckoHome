@@ -10,10 +10,12 @@ from database import (
     add_access_request, get_access_requests, remove_access_request, has_pending_request,
     add_allowed_user, remove_allowed_user,
     get_schedules, save_schedule, delete_schedule, set_schedule_paused, log_lamp_event,
+    log_feeding, get_feeding_history, get_motion_event, update_motion_status, get_allowed_users,
 )
 from bot.access import check_access, is_super_admin
-from bot.keyboards import main_keyboard, schedules_keyboard, admin_keyboard
-from bot.formatters import status_text
+from bot.keyboards import main_keyboard, schedules_keyboard, admin_keyboard, stream_url
+from config import STREAM_BASE_URL
+from bot.formatters import status_text, user_status_text
 
 
 # ─── Commands ───
@@ -22,17 +24,17 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not await check_access(user.id):
         if await has_pending_request(user.id):
-            await update.message.reply_text("\u23f3 Your request is pending approval.")
+            await update.message.reply_text("⏳ Ваш запрос ожидает подтверждения.")
         else:
             await update.message.reply_text(
-                "\U0001f98e *Gecko Home*\n\nYou don't have access yet.",
+                "🦎 *Gecko Home*\n\nУ вас нет доступа к системе.",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("\U0001f4e9 Request Access", callback_data="request_access")]
+                    [InlineKeyboardButton("📩 Запросить доступ", callback_data="request_access")]
                 ]),
             )
         return
-    text = status_text()
+    text = await status_text() if is_super_admin(user.id) else await user_status_text()
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_keyboard(user.id))
 
 
@@ -40,7 +42,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not await check_access(user.id):
         return
-    text = status_text()
+    text = await status_text() if is_super_admin(user.id) else await user_status_text()
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_keyboard(user.id))
 
 
@@ -64,10 +66,13 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # Access gate
     if not await check_access(user_id):
-        await query.answer("Access denied.", show_alert=True)
+        await query.answer("⛔ Нет доступа.", show_alert=True)
         return
 
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception:
+        pass
 
     if data == "noop":
         return
@@ -77,30 +82,66 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return await _handle_refresh(query, user_id)
 
     # Lamps
+    # Lamps — super admin only
     action_map = {
         "uv_on": ("uv", True), "uv_off": ("uv", False),
         "heat_on": ("heat", True), "heat_off": ("heat", False),
     }
     if data in action_map:
+        if not is_super_admin(user_id):
+            await query.answer("⛔ Only super admin can control lamps.", show_alert=True)
+            return
         return await _handle_lamp(query, user_id, *action_map[data])
 
-    # Camera
+    # Camera — all allowed users
     if data == "cam_snap":
         return await _handle_snapshot(query, user_id)
     if data == "cam_clip":
-        return await _handle_clip(query, user_id)
+        return await _handle_clip(query, user_id, 30)
+    if data == "cam_clip3":
+        return await _handle_clip(query, user_id, 180)
 
-    # Schedules
+    # Schedules — super admin only
     if data == "schedules":
+        if not is_super_admin(user_id):
+            await query.answer("⛔ Only super admin can manage schedules.", show_alert=True)
+            return
         return await _handle_schedules(query)
     if data.startswith("sched_toggle_"):
+        if not is_super_admin(user_id):
+            return
         return await _handle_sched_toggle(query, data.replace("sched_toggle_", ""))
     if data.startswith("sched_del_"):
+        if not is_super_admin(user_id):
+            return
         return await _handle_sched_delete(query, data.replace("sched_del_", ""))
     if data == "sched_new":
+        if not is_super_admin(user_id):
+            return
         return await _handle_sched_new(query, ctx)
     if data.startswith("snew_"):
+        if not is_super_admin(user_id):
+            return
         return await _handle_sched_select_lamp(query, ctx, data.replace("snew_", ""))
+
+    # Stream
+    if data == "stream_link":
+        url = stream_url() or f"{STREAM_BASE_URL}/stream"
+        await query.answer()
+        await query.message.reply_text(f"📡 Стрим: {url}")
+        return
+
+    # Feeding
+    if data == "fed" and is_super_admin(user_id):
+        return await _handle_fed(query, user_id)
+    if data == "feeding_history" and is_super_admin(user_id):
+        return await _handle_feeding_history(query)
+
+    # Motion approval
+    if data.startswith("motion_pub_") and is_super_admin(user_id):
+        return await _handle_motion_pub(query, ctx, int(data.replace("motion_pub_", "")))
+    if data.startswith("motion_skip_") and is_super_admin(user_id):
+        return await _handle_motion_skip(query, int(data.replace("motion_skip_", "")))
 
     # Admin
     if data == "admin" and is_super_admin(user_id):
@@ -123,11 +164,11 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             new_id = int(text)
         except ValueError:
-            await update.message.reply_text("\u274c Invalid ID.")
+            await update.message.reply_text("❌ Неверный ID. Введите числовой Telegram ID.")
             return
         await add_allowed_user(new_id)
         kb = await admin_keyboard()
-        await update.message.reply_text(f"\u2705 User `{new_id}` added.", parse_mode="Markdown", reply_markup=kb)
+        await update.message.reply_text(f"✅ Пользователь `{new_id}` добавлен.", parse_mode="Markdown", reply_markup=kb)
         return
 
     if ctx.user_data.get("sched_step") == "time":
@@ -143,13 +184,14 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if duration_h <= 0:
                 duration_h += 24  # crosses midnight
         except (ValueError, IndexError, AssertionError):
-            await update.message.reply_text("\u274c Format: `HH:MM HH:MM`\nExample: `08:00 20:00`", parse_mode="Markdown")
+            await update.message.reply_text("❌ Неверный формат. Пример: `08:00 20:00`", parse_mode="Markdown")
             return
         sched_id = f"{lamp}_{sh:02d}{sm:02d}"
         await save_schedule(sched_id, lamp, sh, sm, duration_h, eh, em)
         kb = await schedules_keyboard()
+        lamp_name = "🔦 UV" if lamp == "uv" else "🔥 Тепловая"
         await update.message.reply_text(
-            f"\u2705 {lamp.upper()} {sh:02d}:{sm:02d} \u2192 {eh:02d}:{em:02d}", reply_markup=kb
+            f"✅ {lamp_name}  {sh:02d}:{sm:02d} → {eh:02d}:{em:02d}", reply_markup=kb
         )
         return
 
@@ -159,19 +201,19 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def _handle_request_access(query, user):
     await query.answer()
     if await has_pending_request(user.id):
-        await query.edit_message_text("\u23f3 Already pending.")
+        await _safe_edit(query, "⏳ Запрос уже отправлен, ожидайте.")
         return
     await add_access_request(user.id, user.username, user.first_name)
-    await query.edit_message_text("\u2705 Request sent!")
+    await _safe_edit(query, "✅ Запрос отправлен!")
     name = f"@{user.username}" if user.username else user.first_name or str(user.id)
     try:
         await query.get_bot().send_message(
             TELEGRAM_SUPER_ADMIN,
-            f"\U0001f514 *Access request*\n{name} (`{user.id}`)",
+            f"🔔 *Запрос доступа*\n{name} (`{user.id}`)",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("\u2705", callback_data=f"approve_{user.id}"),
-                InlineKeyboardButton("\u274c", callback_data=f"deny_{user.id}"),
+                InlineKeyboardButton("✅", callback_data=f"approve_{user.id}"),
+                InlineKeyboardButton("❌", callback_data=f"deny_{user.id}"),
             ]]),
         )
     except Exception:
@@ -183,11 +225,12 @@ async def _handle_approve(query, ctx, data):
     req_id = int(data.replace("approve_", ""))
     reqs = await get_access_requests()
     req = next((r for r in reqs if r["user_id"] == req_id), None)
-    await add_allowed_user(req_id, req["username"] if req else None)
+    await add_allowed_user(req_id, req["username"] if req else None, req["first_name"] if req else None)
     await remove_access_request(req_id)
-    await query.edit_message_text(f"\u2705 User `{req_id}` approved.", parse_mode="Markdown")
+    name = f"@{req['username']}" if req and req.get("username") else (req["first_name"] if req and req.get("first_name") else str(req_id))
+    await _safe_edit(query, f"✅ {name} одобрен.")
     try:
-        await ctx.bot.send_message(req_id, "\U0001f389 Access approved! Send /start")
+        await ctx.bot.send_message(req_id, "🎉 Доступ открыт! Напишите /start")
     except Exception:
         pass
 
@@ -196,16 +239,17 @@ async def _handle_deny(query, ctx, data):
     await query.answer()
     req_id = int(data.replace("deny_", ""))
     await remove_access_request(req_id)
-    await query.edit_message_text(f"\u274c User `{req_id}` denied.", parse_mode="Markdown")
+    await _safe_edit(query, f"❌ Пользователь `{req_id}` отклонён.", parse_mode="Markdown")
     try:
-        await ctx.bot.send_message(req_id, "\u274c Access denied.")
+        await ctx.bot.send_message(req_id, "❌ В доступе отказано.")
     except Exception:
         pass
 
 
 async def _handle_refresh(query, user_id):
     try:
-        await query.edit_message_text(status_text(), parse_mode="Markdown", reply_markup=main_keyboard(user_id))
+        text = await status_text() if is_super_admin(user_id) else await user_status_text()
+        await _safe_edit(query, text, parse_mode="Markdown", reply_markup=main_keyboard(user_id))
     except Exception:
         pass
 
@@ -213,75 +257,84 @@ async def _handle_refresh(query, user_id):
 async def _handle_lamp(query, user_id, lamp, on):
     ok = tuya.switch_lamp(lamp, on)
     word = "ON" if on else "OFF"
+    lamp_name = "UV" if lamp == "uv" else "Тепловая"
+    state = "включена" if on else "выключена"
     if ok:
         await log_lamp_event(lamp, word, f"tg:{user_id}")
-        result = f"\u2705 {lamp.upper()} \u2192 {word}"
+        result = f"✅ {lamp_name} → {state}"
     else:
-        result = f"\u274c Failed: {lamp.upper()} \u2192 {word}"
+        result = f"❌ Ошибка: {lamp_name} не отвечает"
     await asyncio.sleep(1)
     try:
-        await query.edit_message_text(
-            status_text() + f"\n\n{result}",
+        await _safe_edit(query,
+            await status_text() + f"\n\n{result}",
             parse_mode="Markdown", reply_markup=main_keyboard(user_id),
         )
     except Exception:
         pass
 
 
+async def _safe_edit(query, text, **kwargs):
+    try:
+        await query.edit_message_text(text, **kwargs)
+    except Exception:
+        await query.message.reply_text(text, **kwargs)
+
+
 async def _handle_snapshot(query, user_id):
     if not camera.is_configured():
-        await query.edit_message_text("\u274c Camera not configured.")
+        await _safe_edit(query, "❌ Камера не настроена.")
         return
-    await query.edit_message_text("\U0001f4f8 Capturing...")
+    u = query.from_user
+    print(f"[Bot] [{datetime.now().strftime('%H:%M:%S')}] Snapshot requested by @{u.username or u.first_name} ({u.id})")
+    await _safe_edit(query, "📸 Делаю снимок...")
     path = await camera.snapshot()
     if path:
         with open(path, "rb") as f:
             await query.message.reply_photo(
                 f,
-                caption=f"\U0001f98e Gecko Cam \u2022 {datetime.now().strftime('%H:%M:%S')}",
+                caption=f"🦎 Gecko Cam • {datetime.now().strftime('%H:%M:%S')}",
                 reply_markup=main_keyboard(user_id),
             )
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
     else:
-        await query.edit_message_text(
-            status_text() + "\n\n\u274c Snapshot failed",
-            parse_mode="Markdown", reply_markup=main_keyboard(user_id),
-        )
+        text = await status_text() if is_super_admin(user_id) else await user_status_text()
+        await _safe_edit(query, text + "\n\n❌ Не удалось сделать снимок",
+                         parse_mode="Markdown", reply_markup=main_keyboard(user_id))
 
 
-async def _handle_clip(query, user_id):
+async def _handle_clip(query, user_id, duration: int = 30):
     if not camera.is_configured():
-        await query.edit_message_text("\u274c Camera not configured.")
+        await _safe_edit(query, "❌ Камера не настроена.")
         return
-    await query.edit_message_text("\U0001f3ac Recording 15s...")
-    path = await camera.clip(15)
+    u = query.from_user
+    label = "3 мин" if duration >= 60 else f"{duration}с"
+    print(f"[Bot] [{datetime.now().strftime('%H:%M:%S')}] Clip {label} requested by @{u.username or u.first_name} ({u.id})")
+    await _safe_edit(query, f"🎬 Записываю {label}...")
+    path = await camera.clip(duration)
     if path:
         with open(path, "rb") as f:
             await query.message.reply_video(
                 f,
-                caption=f"\U0001f98e Gecko Cam \u2022 {datetime.now().strftime('%H:%M:%S')}",
+                caption=f"🦎 Gecko Cam • {datetime.now().strftime('%H:%M:%S')}",
                 reply_markup=main_keyboard(user_id),
+                width=720, height=1280,
+                write_timeout=max(60, duration * 3),
+                read_timeout=max(60, duration * 3),
             )
         try:
             await query.message.delete()
         except Exception:
             pass
     else:
-        await query.edit_message_text(
-            status_text() + "\n\n\u274c Clip failed",
-            parse_mode="Markdown", reply_markup=main_keyboard(user_id),
-        )
+        text = await status_text() if is_super_admin(user_id) else await user_status_text()
+        await _safe_edit(query, text + "\n\n❌ Не удалось записать клип",
+                         parse_mode="Markdown", reply_markup=main_keyboard(user_id))
 
 
 async def _handle_schedules(query):
     kb = await schedules_keyboard()
-    await query.edit_message_text(
-        "\U0001f4cb *Schedules*\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-        parse_mode="Markdown", reply_markup=kb,
-    )
+    await _safe_edit(query, "📋 *Расписания*\n━━━━━━━━━━━━━━━",
+                     parse_mode="Markdown", reply_markup=kb)
 
 
 async def _handle_sched_toggle(query, sched_id):
@@ -291,10 +344,8 @@ async def _handle_sched_toggle(query, sched_id):
         await set_schedule_paused(sched_id, not sched["paused"])
     kb = await schedules_keyboard()
     try:
-        await query.edit_message_text(
-            "\U0001f4cb *Schedules*\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-            parse_mode="Markdown", reply_markup=kb,
-        )
+        await _safe_edit(query, "📋 *Расписания*\n━━━━━━━━━━━━━━━",
+                         parse_mode="Markdown", reply_markup=kb)
     except Exception:
         pass
 
@@ -303,25 +354,23 @@ async def _handle_sched_delete(query, sched_id):
     await delete_schedule(sched_id)
     kb = await schedules_keyboard()
     try:
-        await query.edit_message_text(
-            "\U0001f4cb *Schedules*\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-            parse_mode="Markdown", reply_markup=kb,
-        )
+        await _safe_edit(query, "📋 *Расписания*\n━━━━━━━━━━━━━━━",
+                         parse_mode="Markdown", reply_markup=kb)
     except Exception:
         pass
 
 
 async def _handle_sched_new(query, ctx):
     ctx.user_data["sched_step"] = "lamp"
-    await query.edit_message_text(
-        "\u2795 *New Schedule*\n\nChoose lamp:",
+    await _safe_edit(query,
+        "➕ *Новое расписание*\n\nВыберите лампу:",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("\U0001f526 UV", callback_data="snew_uv"),
-                InlineKeyboardButton("\U0001f525 Heat", callback_data="snew_heat"),
+                InlineKeyboardButton("🔦 UV",       callback_data="snew_uv"),
+                InlineKeyboardButton("🔥 Тепловая", callback_data="snew_heat"),
             ],
-            [InlineKeyboardButton("\u25c0 Cancel", callback_data="schedules")],
+            [InlineKeyboardButton("◀ Отмена", callback_data="schedules")],
         ]),
     )
 
@@ -329,29 +378,28 @@ async def _handle_sched_new(query, ctx):
 async def _handle_sched_select_lamp(query, ctx, lamp):
     ctx.user_data["sched_lamp"] = lamp
     ctx.user_data["sched_step"] = "time"
-    await query.edit_message_text(
-        f"\u2795 *New Schedule*\n\nLamp: {lamp.upper()}\n\n"
-        f"Send start and end time:\n`HH:MM HH:MM`\n\nExample: `08:00 20:00`",
+    lamp_name = "🔦 UV" if lamp == "uv" else "🔥 Тепловая"
+    await _safe_edit(query,
+        f"➕ *Новое расписание*\n\nЛампа: {lamp_name}\n\n"
+        f"Отправьте время включения и выключения:\n`ЧЧ:ММ ЧЧ:ММ`\n\nПример: `08:00 20:00`",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("\u25c0 Cancel", callback_data="schedules")],
+            [InlineKeyboardButton("◀ Отмена", callback_data="schedules")],
         ]),
     )
 
 
 async def _handle_admin(query):
     kb = await admin_keyboard()
-    await query.edit_message_text(
-        "\u2699\ufe0f *Admin Panel*\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-        parse_mode="Markdown", reply_markup=kb,
-    )
+    await _safe_edit(query, "⚙️ *Управление*\n━━━━━━━━━━━━━━━",
+                     parse_mode="Markdown", reply_markup=kb)
 
 
 async def _handle_add_user_prompt(query, ctx):
     ctx.user_data["waiting_user_id"] = True
-    await query.edit_message_text(
-        "Send user ID:",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u25c0 Cancel", callback_data="admin")]]),
+    await _safe_edit(query,
+        "Отправьте Telegram ID пользователя:",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀ Отмена", callback_data="admin")]]),
     )
 
 
@@ -359,9 +407,58 @@ async def _handle_remove_user(query, rm_id):
     await remove_allowed_user(rm_id)
     kb = await admin_keyboard()
     try:
-        await query.edit_message_text(
-            "\u2699\ufe0f *Admin Panel*\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nUser removed.",
-            parse_mode="Markdown", reply_markup=kb,
-        )
+        await _safe_edit(query, "⚙️ *Управление*\n━━━━━━━━━━━━━━━\n\nПользователь удалён.",
+                         parse_mode="Markdown", reply_markup=kb)
     except Exception:
         pass
+
+
+async def _handle_feeding_history(query):
+    history = await get_feeding_history(20)
+    if not history:
+        text = "🍎 *История кормления*\n━━━━━━━━━━━━━━━\n\n_Нет записей_"
+    else:
+        lines = "\n".join(f"• {dt.strftime('%d.%m.%Y  %H:%M')}" for dt in history)
+        text = f"🍎 *История кормления*\n━━━━━━━━━━━━━━━\n\n{lines}"
+    await _safe_edit(query, text, parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup([[
+                         InlineKeyboardButton("◀ Назад", callback_data="back_main")
+                     ]]))
+
+
+async def _handle_fed(query, user_id):
+    await log_feeding()
+    text = await status_text()
+    await _safe_edit(query, text, parse_mode="Markdown", reply_markup=main_keyboard(user_id))
+
+
+_PUBLISH_USERS = [8563910503]  # тестовый аккаунт; позже заменить на get_allowed_users()
+
+
+async def _handle_motion_pub(query, ctx, event_id: int):
+    event = await get_motion_event(event_id)
+    if not event or event["status"] != "pending":
+        await query.answer("Уже обработано.")
+        return
+
+    await update_motion_status(event_id, "published")
+    await _safe_edit(query, f"✅ Опубликовано\n_{event['caption']}_", parse_mode="Markdown")
+
+    for uid in _PUBLISH_USERS:
+        try:
+            await ctx.bot.send_photo(
+                uid,
+                photo=event["photo_file_id"],
+                caption=f"🦎 {event['caption']}",
+            )
+        except Exception as e:
+            print(f"[Motion] send to {uid} failed: {e}")
+
+
+async def _handle_motion_skip(query, event_id: int):
+    event = await get_motion_event(event_id)
+    if not event or event["status"] != "pending":
+        await query.answer("Уже обработано.")
+        return
+    await update_motion_status(event_id, "skipped")
+    await _safe_edit(query, f"❌ Пропущено\n_{event['caption']}_", parse_mode="Markdown")
