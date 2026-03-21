@@ -90,7 +90,12 @@ CAMERA_RTSP_URL=rtsp://user:pass@192.168.x.x:554/stream
 python -m tinytuya wizard
 ```
 
-Wizard сканирует сеть и выгружает ключи. Нужен доступ к Tuya IoT Platform (iot.tuya.com) с привязанным SmartLife аккаунтом.
+Wizard сканирует сеть и выгружает ключи. Нужен доступ к [iot.tuya.com](https://iot.tuya.com):
+
+1. Зарегистрируйся и создай проект
+2. Подключи **IoT Core** (бесплатный триал — достаточно для получения ключей)
+3. Привяжи SmartLife аккаунт: **Devices → Link Tuya App Account**
+4. Запусти wizard, введи Access ID и Access Secret из проекта
 
 ### 4. Telegram Bot
 
