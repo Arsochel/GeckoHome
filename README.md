@@ -78,7 +78,18 @@ SECRET_KEY=            # python -c "import secrets; print(secrets.token_hex(32))
 
 # Telegram
 TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_SUPER_ADMIN=your_telegram_user_id
+TELEGRAM_SUPER_ADMIN=123456789          # несколько через запятую: 123,456
+
+# Sensors (optional, same pattern as lamps)
+DEVICE_THERMOMETER=your_device_id
+DEVICE_THERMOMETER_IP=192.168.x.x
+DEVICE_THERMOMETER_LOCAL_KEY=your_local_key
+DEVICE_THERMOMETER_VERSION=3.3
+
+DEVICE_HUMIDIFIER=your_device_id
+DEVICE_HUMIDIFIER_IP=192.168.x.x
+DEVICE_HUMIDIFIER_LOCAL_KEY=your_local_key
+DEVICE_HUMIDIFIER_VERSION=3.3
 
 # Camera (optional)
 CAMERA_RTSP_URL=rtsp://user:pass@192.168.x.x:554/stream
@@ -110,14 +121,14 @@ RTSP URL камеры → `.env` `CAMERA_RTSP_URL`. Кнопки камеры в
 ## Running
 
 ```bash
-# Web panel (port 8080)
+# Web panel (port 8000)
 python main.py
 
 # Telegram bot (separate process)
-python bot.py
+python -m bot
 ```
 
-Веб-панель: `http://localhost:8080` → редирект на логин.
+Веб-панель: `http://localhost:8000` → редирект на логин.
 
 При старте автоматически поднимается Cloudflare Quick Tunnel — URL пишется в консоль и используется для Telegram WebApp стрима.
 
