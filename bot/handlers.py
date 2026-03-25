@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ContextTypes
 
 from config import TELEGRAM_SUPER_ADMINS
@@ -11,6 +11,7 @@ from database import (
     add_allowed_user, remove_allowed_user,
     get_schedules, save_schedule, delete_schedule, set_schedule_paused, log_lamp_event,
     log_feeding, get_feeding_history, get_motion_event, update_motion_status, get_allowed_users,
+    log_user_action,
 )
 from bot.access import check_access, is_super_admin
 from bot.keyboards import main_keyboard, schedules_keyboard, admin_keyboard, stream_url
@@ -35,7 +36,14 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
         return
     text = await status_text() if is_super_admin(user.id) else await user_status_text()
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_keyboard(user.id))
+    msg = await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_keyboard(user.id))
+    ctx.user_data["status_msg_id"] = msg.message_id
+    # убираем reply keyboard если была
+    try:
+        tmp = await update.message.reply_text(".", reply_markup=ReplyKeyboardRemove())
+        await tmp.delete()
+    except Exception:
+        pass
 
 
 async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -43,7 +51,18 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await check_access(user.id):
         return
     text = await status_text() if is_super_admin(user.id) else await user_status_text()
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_keyboard(user.id))
+    prev_id = ctx.user_data.get("status_msg_id")
+    if prev_id:
+        try:
+            await ctx.bot.edit_message_text(
+                text, chat_id=update.effective_chat.id, message_id=prev_id,
+                parse_mode="Markdown", reply_markup=main_keyboard(user.id),
+            )
+            return
+        except Exception:
+            pass
+    msg = await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_keyboard(user.id))
+    ctx.user_data["status_msg_id"] = msg.message_id
 
 
 # ─── Callbacks ───
@@ -158,6 +177,7 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     text = update.message.text.strip()
+
 
     if is_super_admin(user.id) and ctx.user_data.get("waiting_user_id"):
         ctx.user_data["waiting_user_id"] = False
@@ -288,6 +308,7 @@ async def _handle_snapshot(query, user_id):
         return
     u = query.from_user
     print(f"[Bot] [{datetime.now().strftime('%H:%M:%S')}] Snapshot requested by @{u.username or u.first_name} ({u.id})")
+    await log_user_action(u.id, u.username or u.first_name, "snapshot")
     await _safe_edit(query, "📸 Делаю снимок...")
     path = await camera.snapshot()
     if path:
@@ -310,6 +331,7 @@ async def _handle_clip(query, user_id, duration: int = 30):
     u = query.from_user
     label = "3 мин" if duration >= 60 else f"{duration}с"
     print(f"[Bot] [{datetime.now().strftime('%H:%M:%S')}] Clip {label} requested by @{u.username or u.first_name} ({u.id})")
+    await log_user_action(u.id, u.username or u.first_name, f"clip_{duration}")
     await _safe_edit(query, f"🎬 Записываю {label}...")
     path = await camera.clip(duration)
     if path:

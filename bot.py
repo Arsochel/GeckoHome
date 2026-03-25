@@ -2,6 +2,7 @@ import asyncio
 import json
 from datetime import datetime
 
+from telegram import BotCommand
 from telegram.error import NetworkError, TimedOut
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
@@ -54,6 +55,10 @@ def main():
 
     async def _post_init(application):
         asyncio.create_task(_log_server())
+        await application.bot.set_my_commands([
+            BotCommand("start", "Главное меню"),
+            BotCommand("status", "Статус террариума"),
+        ])
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).concurrent_updates(True).post_init(_post_init).build()
     app.add_handler(CommandHandler("start", cmd_start))
@@ -65,7 +70,7 @@ def main():
     import atexit
     atexit.register(lambda: print("[Bot] stopped"))
 
-    print("Bot started")
+    print("[Bot] started")
     app.run_polling()
 
 

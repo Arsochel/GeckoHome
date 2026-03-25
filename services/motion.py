@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 
 os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "-8"
+os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 import cv2
 import httpx
 
@@ -17,6 +18,10 @@ import shutil
 from database import save_photo, add_motion_event, set_gecko_state
 
 _last_motion_time: datetime | None = None
+
+
+def get_last_motion_time() -> datetime | None:
+    return _last_motion_time
 
 
 def _find_dataset_dir() -> str | None:
@@ -36,8 +41,10 @@ def get_last_motion_time() -> datetime | None:
     return _last_motion_time
 
 # ── Настройки ──────────────────────────────────────────────────────────────
-MOTION_THRESHOLD = 8       # порог разницы пикселей (0–255)
-MOTION_MIN_AREA  = 100     # мин. площадь контура чтобы считать движением
+MOTION_THRESHOLD = 25      # порог разницы пикселей (0–255)
+MOTION_MIN_AREA  = 1342    # мин. площадь контура чтобы считать движением
+MOTION_DEBUG     = True    # сохранять дебаг-кадр (доступен на /api/motion/debug)
+_DEBUG_FRAME_PATH = os.path.join(tempfile.gettempdir(), "gecko_motion_debug.jpg")
 MOTION_TIMEOUT   = 45      # секунд без движения → конец сессии
 SNAPSHOT_INTERVAL = 10     # секунд между снапшотами во время движения
 MIN_FRAMES       = 1       # минимум кадров чтобы отправить видео
@@ -142,6 +149,10 @@ class MotionMonitor:
         self._task: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stop_event = threading.Event()
+        self._latest_frame = None
+
+    def get_latest_frame(self):
+        return self._latest_frame
 
     async def start(self):
         if not CAMERA_RTSP_URL:
@@ -149,37 +160,42 @@ class MotionMonitor:
             return
         self._stop_event.clear()
         self._loop = asyncio.get_running_loop()
-        self._task = asyncio.create_task(self._monitor())
+        t = threading.Thread(target=self._thread_loop, daemon=True)
+        t.start()
         print("[Motion] monitor started")
 
     async def stop(self):
         self._stop_event.set()
-        if self._task:
-            self._task.cancel()
-            try:
-                await asyncio.wait_for(asyncio.shield(self._task), timeout=5)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
-            self._task = None
         print("[Motion] monitor stopped")
 
-    async def _monitor(self):
-        while True:
+    def _thread_loop(self):
+        while not self._stop_event.is_set():
             try:
-                await asyncio.to_thread(self._run_sync)
-            except asyncio.CancelledError:
-                raise
+                self._run_sync()
             except Exception as e:
-                print(f"[Motion] loop error: {e}, retry in 15s")
-                await asyncio.sleep(15)
+                if not self._stop_event.is_set():
+                    print(f"[Motion] loop error: {e}, retry in 15s")
+                    self._stop_event.wait(15)
 
     def _run_sync(self):
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
         cap = cv2.VideoCapture(CAMERA_RTSP_URL, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000)
+        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
         if not cap.isOpened():
             raise RuntimeError("Cannot open RTSP stream for motion detection")
+
+        # отдельный поток захвата — всегда держит свежий кадр
+        latest_frame: list = [None]
+        def _capture_loop():
+            while not self._stop_event.is_set():
+                ret, f = cap.read()
+                if ret:
+                    latest_frame[0] = f
+                    self._latest_frame = f
+        cap_thread = threading.Thread(target=_capture_loop, daemon=True)
+        cap_thread.start()
 
         prev_gray      = None
         motion_active  = False
@@ -189,12 +205,11 @@ class MotionMonitor:
 
         try:
             while not self._stop_event.is_set():
-                ret, frame = cap.read()
-                if not ret:
-                    if self._stop_event.is_set():
-                        break
-                    time.sleep(1)
+                frame = latest_frame[0]
+                if frame is None:
+                    time.sleep(0.1)
                     continue
+                latest_frame[0] = None  # сбрасываем чтобы не обрабатывать один кадр дважды
 
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 gray = cv2.GaussianBlur(gray, (21, 21), 0)
@@ -204,11 +219,23 @@ class MotionMonitor:
                     continue
 
                 diff = cv2.absdiff(prev_gray, gray)
+                # маскируем timestamp камеры (нижний левый угол)
+                h, w = diff.shape
+                diff[int(h * 0.88):, :int(w * 0.35)] = 0
                 _, thresh = cv2.threshold(diff, MOTION_THRESHOLD, 255, cv2.THRESH_BINARY)
                 contours, _ = cv2.findContours(
                     thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
                 )
-                motion = any(cv2.contourArea(c) > MOTION_MIN_AREA for c in contours)
+                big_contours = [c for c in contours if cv2.contourArea(c) > MOTION_MIN_AREA]
+                motion = len(big_contours) > 0
+
+                if MOTION_DEBUG:
+                    debug = frame.copy()
+                    cv2.drawContours(debug, big_contours, -1, (0, 255, 0), 2)
+                    max_area = int(max((cv2.contourArea(c) for c in contours), default=0))
+                    label = f"MOTION area={int(max((cv2.contourArea(c) for c in big_contours), default=0))}" if motion else f"quiet max={max_area}"
+                    cv2.putText(debug, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0) if motion else (100, 100, 100), 2)
+                    cv2.imwrite(_DEBUG_FRAME_PATH, debug)
 
                 now = time.monotonic()
 
@@ -218,10 +245,15 @@ class MotionMonitor:
                         motion_active = True
                         global _last_motion_time
                         _last_motion_time = datetime.now()
-                        print("[Motion] started")
+                        print("\033[92m[Motion] started\033[0m")
                         asyncio.run_coroutine_threadsafe(
                             set_gecko_state("roaming"), self._loop
                         )
+                        asyncio.run_coroutine_threadsafe(
+                            self._record_and_send(), self._loop
+                        )
+                    else:
+                        _last_motion_time = datetime.now()
 
                     if now - last_snap_t >= SNAPSHOT_INTERVAL:
                         fd, path = tempfile.mkstemp(suffix=".jpg", prefix="gecko_motion_")
@@ -235,7 +267,7 @@ class MotionMonitor:
                     motion_active = False
                     captured = snapshots[:]
                     snapshots = []
-                    print(f"[Motion] ended — {len(captured)} frames")
+                    print(f"\033[93m[Motion] ended — {len(captured)} frames\033[0m")
 
                     if len(captured) >= MIN_FRAMES:
                         asyncio.run_coroutine_threadsafe(
@@ -255,40 +287,41 @@ class MotionMonitor:
         finally:
             cap.release()
 
+    async def _record_and_send(self):
+        """Записывает 30-секундный клип при срабатывании и отправляет суперадмину."""
+        try:
+            from services.camera import clip as camera_clip
+            print("[Motion] recording 30s clip...")
+            video_path = await camera_clip(30)
+            if video_path:
+                await _send_telegram_video(video_path, "🦎 Движение!")
+                try:
+                    os.unlink(video_path)
+                except Exception:
+                    pass
+            else:
+                print("[Motion] clip failed")
+        except Exception as e:
+            print(f"[Motion] record error: {e}")
+
     async def _process(self, snapshot_paths: list[str]):
+        """Сохраняет кадры в датасет и галерею."""
         try:
             await set_gecko_state("resting")
-            with open(snapshot_paths[0], "rb") as f:
-                photo_bytes = f.read()
 
-            caption = f"🦎 Движение! {len(snapshot_paths)} кадров"
+            # Средний кадр → в галерею
+            mid_path = snapshot_paths[len(snapshot_paths) // 2]
+            with open(mid_path, "rb") as f:
+                mid_bytes = f.read()
+            await save_photo(mid_bytes, source="motion", caption=f"{len(snapshot_paths)} frames")
 
-            # Первый кадр → в галерею + в Telegram с кнопками одобрения
-            await save_photo(photo_bytes, source="motion")
-            await _send_photo_with_approval(photo_bytes, caption)
-
-            # Все кадры → копируем в датасет для разметки
+            # Все кадры → в датасет
             if _DATASET_IMAGES_DIR:
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 for i, p in enumerate(snapshot_paths):
                     dst = os.path.join(_DATASET_IMAGES_DIR, f"{ts}_{i:02d}.jpg")
                     shutil.copy2(p, dst)
                 print(f"[Dataset] {len(snapshot_paths)} frames → {_DATASET_IMAGES_DIR}")
-
-            # Средний кадр → сохраняем как хайлайт
-            mid_path = snapshot_paths[len(snapshot_paths) // 2]
-            with open(mid_path, "rb") as f:
-                mid_bytes = f.read()
-            await save_photo(mid_bytes, source="highlight", caption=f"{len(snapshot_paths)} frames")
-
-            # Видео → сразу суперадмину (без одобрения)
-            video_path = await asyncio.to_thread(_compile_video_sync, snapshot_paths)
-            if video_path:
-                await _send_telegram_video(video_path, f"🎬 {caption}")
-                try:
-                    os.unlink(video_path)
-                except Exception:
-                    pass
         except Exception as e:
             print(f"[Motion] process error: {e}")
         finally:

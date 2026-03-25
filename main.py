@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import threading
 from datetime import datetime
 from contextlib import asynccontextmanager
 
@@ -20,31 +21,67 @@ from routers import auth, admin, devices, schedules
 
 _TUNNEL_URL_FILE = os.path.join(os.path.dirname(__file__), "tunnel_url.txt")
 
+
+_TUNNEL_PID_FILE = os.path.join(os.path.dirname(__file__), "tunnel.pid")
+
+
+def _cloudflared_running() -> bool:
+    """True если cloudflared процесс из прошлого запуска ещё жив."""
+    try:
+        with open(_TUNNEL_PID_FILE) as f:
+            pid = int(f.read().strip())
+        import subprocess
+        out = subprocess.run(
+            ["tasklist", "/fi", f"PID eq {pid}", "/fo", "csv", "/nh"],
+            capture_output=True, text=True,
+        ).stdout
+        return str(pid) in out
+    except Exception:
+        return False
+
+
 def _run_cloudflared():
     import subprocess
+    import time
     port = os.getenv("SERVER_PORT", "8000")
-    try:
-        proc = subprocess.Popen(
-            ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{port}"],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        )
-        for line in proc.stdout:
-            text = line.decode(errors="ignore")
-            m = re.search(r"https://[\w-]+\.trycloudflare\.com", text)
-            if m:
-                url = m.group(0)
-                with open(_TUNNEL_URL_FILE, "w") as f:
-                    f.write(url)
-                print(f"[Cloudflare] {url}")
-        proc.wait()
-    except FileNotFoundError:
-        print("[Cloudflare] cloudflared not found, skipping")
-    except Exception as e:
-        print(f"[Cloudflare] error: {type(e).__name__}: {e}")
+    if _cloudflared_running():
+        print("[Cloudflare] process alive, reusing tunnel")
+        return
+    delay = 60  # начальная пауза между перезапусками
+    while True:
+        try:
+            try:
+                os.remove(_TUNNEL_URL_FILE)
+            except OSError:
+                pass
+            proc = subprocess.Popen(
+                ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{port}"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
+            with open(_TUNNEL_PID_FILE, "w") as f:
+                f.write(str(proc.pid))
+            for line in proc.stdout:
+                text = line.decode(errors="ignore").strip()
+                m = re.search(r"https://[\w-]+\.trycloudflare\.com", text)
+                if m:
+                    url = m.group(0)
+                    with open(_TUNNEL_URL_FILE, "w") as f:
+                        f.write(url)
+                    print(f"[Cloudflare] {url}")
+                    delay = 60
+            proc.wait()
+        except FileNotFoundError:
+            print("[Cloudflare] not found, skipping")
+            return
+        except Exception as e:
+            print(f"[Cloudflare] error: {e}")
+        time.sleep(delay)
+        delay = min(delay * 2, 1800)  # экспоненциальный backoff, макс 30 мин
 
 
 async def _start_cloudflared():
-    await asyncio.to_thread(_run_cloudflared)
+    t = threading.Thread(target=_run_cloudflared, daemon=True)
+    t.start()
 
 
 @asynccontextmanager
@@ -126,6 +163,11 @@ async def stream_view(request: Request):
                 )
         except Exception:
             pass
+        try:
+            from database import log_user_action
+            await log_user_action(int(uid), username or name, "stream")
+        except Exception:
+            pass
     except Exception as e:
         print(f"[Stream] view log error: {e}")
     return {"ok": True}
@@ -174,6 +216,14 @@ async def serve_hls(filename: str):
     if filename.endswith(".m3u8"):
         return FileResponse(path, media_type="application/vnd.apple.mpegurl")
     return FileResponse(path, media_type="video/mp2t")
+
+
+@app.get("/api/motion/debug")
+async def motion_debug():
+    from services.motion import _DEBUG_FRAME_PATH
+    if not os.path.exists(_DEBUG_FRAME_PATH):
+        raise HTTPException(status_code=404, detail="No debug frame yet")
+    return FileResponse(_DEBUG_FRAME_PATH, media_type="image/jpeg")
 
 
 if __name__ == "__main__":

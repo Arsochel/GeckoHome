@@ -95,7 +95,43 @@ async def init_db():
             """)
         except Exception:
             pass
+        try:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS user_actions (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    occurred_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    user_id    INTEGER NOT NULL,
+                    username   TEXT,
+                    action     TEXT NOT NULL
+                )
+            """)
+        except Exception:
+            pass
         await db.commit()
+
+
+async def log_user_action(user_id: int, username: str | None, action: str):
+    async with _db(write=True) as db:
+        await db.execute(
+            "INSERT INTO user_actions (user_id, username, action) VALUES (?, ?, ?)",
+            (user_id, username, action),
+        )
+
+
+async def get_user_stats() -> list[dict]:
+    async with _db() as db:
+        async with db.execute("""
+            SELECT username, user_id,
+                SUM(action = 'snapshot')  AS snapshots,
+                SUM(action = 'clip_30')   AS clips_30,
+                SUM(action = 'clip_180')  AS clips_3min,
+                SUM(action = 'stream')    AS streams,
+                MAX(occurred_at)          AS last_seen
+            FROM user_actions
+            GROUP BY user_id
+            ORDER BY snapshots + clips_30 + clips_3min + streams DESC
+        """) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
 
 # ── Schedules ──

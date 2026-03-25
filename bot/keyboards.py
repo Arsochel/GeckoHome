@@ -24,24 +24,28 @@ def stream_url() -> str | None:
     return url
 
 
-def _stream_btn() -> InlineKeyboardButton:
+
+
+def _camera_rows() -> list:
+    if not camera.is_configured():
+        return []
+    rows = [
+        [
+            InlineKeyboardButton("📸 Снимок", callback_data="cam_snap"),
+            InlineKeyboardButton("🎬 Клип 30с", callback_data="cam_clip"),
+        ],
+        [
+            InlineKeyboardButton("🎥 Клип 3 мин", callback_data="cam_clip3"),
+        ],
+    ]
     url = stream_url()
     if url:
-        return InlineKeyboardButton("📡 Стрим", web_app=WebAppInfo(url=url))
-    return InlineKeyboardButton("📡 Стрим (недоступен)", callback_data="noop")
+        rows.append([InlineKeyboardButton("📡 Стрим", web_app=WebAppInfo(url=url))])
+    return rows
 
 
 def user_keyboard() -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh")]]
-    if camera.is_configured():
-        rows.insert(0, [InlineKeyboardButton("🎥 Клип 3 мин", callback_data="cam_clip3")])
-        rows.insert(0, [
-            InlineKeyboardButton("📸 Снимок",   callback_data="cam_snap"),
-            InlineKeyboardButton("🎬 Клип 30с", callback_data="cam_clip"),
-        ])
-        btn = _stream_btn()
-        rows.insert(0, [btn if btn else InlineKeyboardButton("📡 Стрим (недоступен)", callback_data="noop")])
-    return InlineKeyboardMarkup(rows)
+    return InlineKeyboardMarkup(_camera_rows())
 
 
 def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
@@ -63,21 +67,11 @@ def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
             f"🔥 Тепловая: {'выкл ➜ вкл' if not heat_on else 'вкл ➜ выкл'}",
             callback_data="heat_on" if not heat_on else "heat_off",
         )],
+        *_camera_rows(),
+        [InlineKeyboardButton("🍎 Покормил", callback_data="fed")],
+        [InlineKeyboardButton("📋 Расписания", callback_data="schedules")],
+        [InlineKeyboardButton("⚙️ Управление", callback_data="admin")],
     ]
-    if camera.is_configured():
-        btn = _stream_btn()
-        rows.append([btn if btn else InlineKeyboardButton("📡 Стрим (в разработке)", callback_data="noop")])
-        rows.append([
-            InlineKeyboardButton("📸 Снимок",   callback_data="cam_snap"),
-            InlineKeyboardButton("🎬 Клип 30с", callback_data="cam_clip"),
-        ])
-        rows.append([InlineKeyboardButton("🎥 Клип 3 мин", callback_data="cam_clip3")])
-    rows.append([InlineKeyboardButton("🍎 Покормил", callback_data="fed")])
-    rows.append([
-        InlineKeyboardButton("📋 Расписания", callback_data="schedules"),
-        InlineKeyboardButton("🔄 Обновить",   callback_data="refresh"),
-    ])
-    rows.append([InlineKeyboardButton("⚙️ Управление", callback_data="admin")])
     return InlineKeyboardMarkup(rows)
 
 

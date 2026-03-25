@@ -33,6 +33,22 @@ def _run_ffmpeg(args: list, timeout: int) -> subprocess.CompletedProcess:
 async def snapshot() -> str | None:
     if not CAMERA_RTSP_URL:
         return None
+
+    # Берём кадр из motion monitor если есть — не открываем лишнее RTSP соединение
+    try:
+        from services.motion import monitor as _monitor
+        import cv2 as _cv2
+        frame = _monitor.get_latest_frame()
+        if frame is not None:
+            frame = _cv2.rotate(frame, _cv2.ROTATE_90_CLOCKWISE)
+            fd, path = tempfile.mkstemp(suffix=".jpg", prefix="gecko_snap_")
+            os.close(fd)
+            _cv2.imwrite(path, frame)
+            if os.path.getsize(path) > 0:
+                return path
+    except Exception:
+        pass
+
     fd, path = tempfile.mkstemp(suffix=".jpg", prefix="gecko_snap_")
     os.close(fd)
     try:
