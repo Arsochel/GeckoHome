@@ -34,11 +34,16 @@ async def snapshot() -> str | None:
     if not CAMERA_RTSP_URL:
         return None
 
-    # Берём кадр из motion monitor если есть — не открываем лишнее RTSP соединение
+    # Берём кадр из motion monitor — не открываем лишнее RTSP соединение
     try:
         from services.motion import monitor as _monitor
         import cv2 as _cv2
-        frame = _monitor.get_latest_frame()
+        # Ждём кадра до 3 секунд если monitor запущен но кадра ещё нет
+        for _ in range(30):
+            frame = _monitor.get_latest_frame()
+            if frame is not None:
+                break
+            await asyncio.sleep(0.1)
         if frame is not None:
             frame = _cv2.rotate(frame, _cv2.ROTATE_90_CLOCKWISE)
             fd, path = tempfile.mkstemp(suffix=".jpg", prefix="gecko_snap_")
@@ -109,8 +114,8 @@ async def start_hls():
             "-metadata:s:v:0", "rotate=0",
             "-an",
             "-f", "hls",
-            "-hls_time", "2",
-            "-hls_list_size", "5",
+            "-hls_time", "1",
+            "-hls_list_size", "3",
             "-hls_flags", "delete_segments+append_list",
             "-hls_segment_filename", os.path.join(HLS_DIR, "seg%03d.ts"),
             playlist,
