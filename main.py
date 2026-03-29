@@ -10,7 +10,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from config import SECRET_KEY, MEDIAMTX_BIN
+from config import SECRET_KEY, MEDIAMTX_BIN, YOLO_MODEL_PATH
 from database import init_db, load_last_feeding
 from services import tuya, camera
 from services.scheduler import load_schedules, start as start_scheduler, shutdown as stop_scheduler
@@ -131,9 +131,55 @@ os.makedirs(camera.HLS_DIR, exist_ok=True)
 _templates = Jinja2Templates(directory="templates")
 
 
+_yolo_model = None
+
+def _get_yolo():
+    global _yolo_model
+    if _yolo_model is None and YOLO_MODEL_PATH and os.path.exists(YOLO_MODEL_PATH):
+        from ultralytics import YOLO
+        _yolo_model = YOLO(YOLO_MODEL_PATH)
+        print(f"[YOLO] model loaded: {YOLO_MODEL_PATH}")
+    return _yolo_model
+
+
 @app.get("/stream", response_class=HTMLResponse)
 async def stream_page(request: Request):
     return _templates.TemplateResponse("stream.html", {"request": request})
+
+
+@app.get("/stream/detect", response_class=HTMLResponse)
+async def stream_detect_page(request: Request):
+    return _templates.TemplateResponse("stream_detect.html", {"request": request})
+
+
+@app.get("/api/stream/detect.mjpeg")
+async def stream_detect_mjpeg():
+    import cv2
+    from fastapi.responses import StreamingResponse
+
+    def _generate():
+        model = _get_yolo()
+        while True:
+            frame = motion_monitor.get_latest_frame()
+            if frame is None:
+                import time; time.sleep(0.1)
+                continue
+            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+            if model is not None:
+                results = model(frame, verbose=False, conf=0.6)[0]
+                for box in results.boxes:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    conf = float(box.conf[0])
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.putText(frame, f"{conf:.2f}", (x1, y1 - 6),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
+
+    return StreamingResponse(
+        _generate(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
 
 
 @app.post("/api/stream/view")

@@ -23,6 +23,7 @@ TELEGRAM_SUPER_ADMINS: set[int] = {
 
 CAMERA_RTSP_URL = os.getenv("CAMERA_RTSP_URL", "")
 MEDIAMTX_BIN = os.getenv("MEDIAMTX_BIN", "mediamtx")
+YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "")
 
 STREAM_BASE_URL = os.getenv("STREAM_BASE_URL", "http://localhost:8080")
 

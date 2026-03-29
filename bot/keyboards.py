@@ -8,6 +8,13 @@ from bot.access import is_super_admin
 from config import STREAM_BASE_URL
 
 
+def detect_stream_url() -> str | None:
+    url = stream_url()
+    if url:
+        return url.replace("/stream", "/stream/detect")
+    return None
+
+
 def stream_url() -> str | None:
     """None если URL локальный и не подходит для кнопки."""
     tunnel_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tunnel_url.txt")
@@ -41,6 +48,9 @@ def _camera_rows() -> list:
     url = stream_url()
     if url:
         rows.append([InlineKeyboardButton("📡 Стрим", web_app=WebAppInfo(url=url))])
+    det_url = detect_stream_url()
+    if det_url:
+        rows.append([InlineKeyboardButton("🔍 Стрим+детект", web_app=WebAppInfo(url=det_url))])
     return rows
 
 

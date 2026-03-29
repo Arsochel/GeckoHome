@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>🦎 Gecko Detect</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+        img {
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            transform: translate(-50%, -50%);
+        }
+        #overlay {
+            position: fixed; inset: 0;
+            display: flex; align-items: center; justify-content: center;
+            color: #fff; font-family: sans-serif; font-size: 16px;
+            background: rgba(0,0,0,0.6);
+            pointer-events: none;
+        }
+        #overlay.hidden { display: none; }
+    </style>
+</head>
+<body>
+    <img id="feed" alt="detect stream">
+    <div id="overlay">Подключение...</div>
+    <script>
+    const feed = document.getElementById('feed');
+    const overlay = document.getElementById('overlay');
+    feed.src = window.location.origin + '/api/stream/detect.mjpeg';
+    feed.onload = () => overlay.classList.add('hidden');
+    feed.onerror = () => {
+        overlay.classList.remove('hidden');
+        overlay.textContent = 'Ошибка потока';
+        setTimeout(() => { feed.src = feed.src; }, 3000);
+    };
+    </script>
+</body>
+</html>
