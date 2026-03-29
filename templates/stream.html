@@ -10,10 +10,12 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
         video {
-            width: 100%;
-            height: 100%;
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 100vh;
+            height: 100vw;
             object-fit: contain;
-            display: block;
+            transform: translate(-50%, -50%) rotate(90deg);
         }
         #overlay {
             position: fixed; inset: 0;
@@ -92,15 +94,8 @@
         }
     }
 
-    function isLocal() {
-        const h = window.location.hostname;
-        return h === 'localhost' || h === '127.0.0.1' || h.startsWith('192.168.') || h.startsWith('10.');
-    }
-
     async function connect() {
-        if (isLocal()) {
-            try { await connectWebRTC(); return; } catch(e) {}
-        }
+        try { await connectWebRTC(); return; } catch(e) {}
         connectHLS();
     }
 
