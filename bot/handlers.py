@@ -313,17 +313,18 @@ async def _handle_snapshot(query, user_id):
     await log_user_action(u.id, u.username or u.first_name, "snapshot")
     await _safe_edit(query, "📸 Делаю снимок...")
     path = await camera.snapshot()
+    text = await status_text() if is_super_admin(user_id) else await user_status_text()
+    kb = await main_keyboard(user_id)
     if path:
         with open(path, "rb") as f:
             await query.message.reply_photo(
                 f,
                 caption=f"🦎 Gecko Cam • {datetime.now().strftime('%H:%M:%S')}",
-                reply_markup=await main_keyboard(user_id),
             )
+        await _safe_edit(query, text, parse_mode="Markdown", reply_markup=kb)
     else:
-        text = await status_text() if is_super_admin(user_id) else await user_status_text()
         await _safe_edit(query, text + "\n\n❌ Не удалось сделать снимок",
-                         parse_mode="Markdown", reply_markup=await main_keyboard(user_id))
+                         parse_mode="Markdown", reply_markup=kb)
 
 
 async def _handle_clip(query, user_id, duration: int = 30):
@@ -336,24 +337,21 @@ async def _handle_clip(query, user_id, duration: int = 30):
     await log_user_action(u.id, u.username or u.first_name, f"clip_{duration}")
     await _safe_edit(query, f"🎬 Записываю {label}...")
     path = await camera.clip(duration)
+    text = await status_text() if is_super_admin(user_id) else await user_status_text()
+    kb = await main_keyboard(user_id)
     if path:
         with open(path, "rb") as f:
             await query.message.reply_video(
                 f,
                 caption=f"🦎 Gecko Cam • {datetime.now().strftime('%H:%M:%S')}",
-                reply_markup=await main_keyboard(user_id),
                 width=720, height=1280,
                 write_timeout=max(60, duration * 3),
                 read_timeout=max(60, duration * 3),
             )
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
+        await _safe_edit(query, text, parse_mode="Markdown", reply_markup=kb)
     else:
-        text = await status_text() if is_super_admin(user_id) else await user_status_text()
         await _safe_edit(query, text + "\n\n❌ Не удалось записать клип",
-                         parse_mode="Markdown", reply_markup=await main_keyboard(user_id))
+                         parse_mode="Markdown", reply_markup=kb)
 
 
 async def _handle_schedules(query):
