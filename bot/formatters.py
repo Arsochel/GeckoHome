@@ -14,8 +14,8 @@ _ZONE_LABELS = {
 }
 
 _STATE_LABELS = {
-    "sleeping":    "💀 Спит",
-    "resting":     "💀 Отдыхает",
+    "sleeping":    "😴 Спит",
+    "resting":     "🛌 Отдыхает",
     "roaming":     "🏃 Шарится",
     "basking":     "🌡 Греется",
     "watching":    "👀 Смотрит в камеру",
