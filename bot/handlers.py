@@ -36,7 +36,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
         return
     text = await status_text() if is_super_admin(user.id) else await user_status_text()
-    msg = await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_keyboard(user.id))
+    msg = await update.message.reply_text(text, parse_mode="Markdown", reply_markup=await main_keyboard(user.id))
     ctx.user_data["status_msg_id"] = msg.message_id
     # убираем reply keyboard если была
     try:
@@ -56,12 +56,12 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             await ctx.bot.edit_message_text(
                 text, chat_id=update.effective_chat.id, message_id=prev_id,
-                parse_mode="Markdown", reply_markup=main_keyboard(user.id),
+                parse_mode="Markdown", reply_markup=await main_keyboard(user.id),
             )
             return
         except Exception:
             pass
-    msg = await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_keyboard(user.id))
+    msg = await update.message.reply_text(text, parse_mode="Markdown", reply_markup=await main_keyboard(user.id))
     ctx.user_data["status_msg_id"] = msg.message_id
 
 
@@ -272,7 +272,7 @@ async def _handle_deny(query, ctx, data):
 async def _handle_refresh(query, user_id):
     try:
         text = await status_text() if is_super_admin(user_id) else await user_status_text()
-        await _safe_edit(query, text, parse_mode="Markdown", reply_markup=main_keyboard(user_id))
+        await _safe_edit(query, text, parse_mode="Markdown", reply_markup=await main_keyboard(user_id))
     except Exception:
         pass
 
@@ -291,7 +291,7 @@ async def _handle_lamp(query, user_id, lamp, on):
     try:
         await _safe_edit(query,
             await status_text() + f"\n\n{result}",
-            parse_mode="Markdown", reply_markup=main_keyboard(user_id),
+            parse_mode="Markdown", reply_markup=await main_keyboard(user_id),
         )
     except Exception:
         pass
@@ -318,12 +318,12 @@ async def _handle_snapshot(query, user_id):
             await query.message.reply_photo(
                 f,
                 caption=f"🦎 Gecko Cam • {datetime.now().strftime('%H:%M:%S')}",
-                reply_markup=main_keyboard(user_id),
+                reply_markup=await main_keyboard(user_id),
             )
     else:
         text = await status_text() if is_super_admin(user_id) else await user_status_text()
         await _safe_edit(query, text + "\n\n❌ Не удалось сделать снимок",
-                         parse_mode="Markdown", reply_markup=main_keyboard(user_id))
+                         parse_mode="Markdown", reply_markup=await main_keyboard(user_id))
 
 
 async def _handle_clip(query, user_id, duration: int = 30):
@@ -341,7 +341,7 @@ async def _handle_clip(query, user_id, duration: int = 30):
             await query.message.reply_video(
                 f,
                 caption=f"🦎 Gecko Cam • {datetime.now().strftime('%H:%M:%S')}",
-                reply_markup=main_keyboard(user_id),
+                reply_markup=await main_keyboard(user_id),
                 width=720, height=1280,
                 write_timeout=max(60, duration * 3),
                 read_timeout=max(60, duration * 3),
@@ -353,7 +353,7 @@ async def _handle_clip(query, user_id, duration: int = 30):
     else:
         text = await status_text() if is_super_admin(user_id) else await user_status_text()
         await _safe_edit(query, text + "\n\n❌ Не удалось записать клип",
-                         parse_mode="Markdown", reply_markup=main_keyboard(user_id))
+                         parse_mode="Markdown", reply_markup=await main_keyboard(user_id))
 
 
 async def _handle_schedules(query):
@@ -463,7 +463,7 @@ async def _handle_feeding_history(query):
 async def _handle_fed(query, user_id):
     await log_feeding()
     text = await status_text()
-    await _safe_edit(query, text, parse_mode="Markdown", reply_markup=main_keyboard(user_id))
+    await _safe_edit(query, text, parse_mode="Markdown", reply_markup=await main_keyboard(user_id))
 
 
 _PUBLISH_USERS = [8563910503]  # тестовый аккаунт; позже заменить на get_allowed_users()

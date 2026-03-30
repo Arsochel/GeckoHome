@@ -3,7 +3,7 @@ import os
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from services import tuya, camera
-from database import get_schedules, get_allowed_users, get_access_requests
+from database import get_schedules, get_access_requests
 from bot.access import is_super_admin
 from config import STREAM_BASE_URL
 
@@ -58,7 +58,7 @@ def user_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(_camera_rows())
 
 
-def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
+async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
     if not is_super_admin(user_id):
         return user_keyboard()
 
@@ -67,6 +67,9 @@ def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
 
     uv_on   = uv.get("switch") is True
     heat_on = heat.get("switch") is True
+
+    requests = await get_access_requests()
+    admin_label = f"⚙️ Управление 🔴 {len(requests)}" if requests else "⚙️ Управление"
 
     rows = [
         [InlineKeyboardButton(
@@ -80,7 +83,7 @@ def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
         *_camera_rows(),
         [InlineKeyboardButton("🍎 Покормил", callback_data="fed")],
         [InlineKeyboardButton("📋 Расписания", callback_data="schedules")],
-        [InlineKeyboardButton("⚙️ Управление", callback_data="admin")],
+        [InlineKeyboardButton(admin_label, callback_data="admin")],
     ]
     return InlineKeyboardMarkup(rows)
 
@@ -104,12 +107,11 @@ async def schedules_keyboard() -> InlineKeyboardMarkup:
 
 
 async def admin_keyboard() -> InlineKeyboardMarkup:
-    users    = await get_allowed_users()
     requests = await get_access_requests()
     rows = []
 
     if requests:
-        rows.append([InlineKeyboardButton("⏳ Запросы доступа", callback_data="noop")])
+        rows.append([InlineKeyboardButton(f"⏳ Запросы доступа ({len(requests)})", callback_data="noop")])
         for r in requests:
             name = f"@{r['username']}" if r.get("username") else r.get("first_name") or str(r["user_id"])
             rows.append([
@@ -118,18 +120,7 @@ async def admin_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("❌", callback_data=f"deny_{r['user_id']}"),
             ])
 
-    rows.append([InlineKeyboardButton("👥 Пользователи", callback_data="noop")])
-    if users:
-        for u in users:
-            label = f"@{u['username']}" if u.get("username") else (u.get("first_name") or str(u["user_id"]))
-            rows.append([
-                InlineKeyboardButton(label,  callback_data="noop"),
-                InlineKeyboardButton("🗑",   callback_data=f"rm_user_{u['user_id']}"),
-            ])
-    else:
-        rows.append([InlineKeyboardButton("Нет пользователей", callback_data="noop")])
-
     rows.append([InlineKeyboardButton("➕ Добавить по ID", callback_data="add_user")])
     rows.append([InlineKeyboardButton("🔄 Перезапустить туннель", callback_data="tunnel_restart")])
-    rows.append([InlineKeyboardButton("◀ Назад",           callback_data="back_main")])
+    rows.append([InlineKeyboardButton("◀ Назад", callback_data="back_main")])
     return InlineKeyboardMarkup(rows)
