@@ -84,6 +84,27 @@ async def _start_cloudflared():
     t.start()
 
 
+def restart_tunnel():
+    """Убивает старый cloudflared и запускает новый. Вызывается из бота."""
+    import subprocess
+    try:
+        with open(_TUNNEL_PID_FILE) as f:
+            pid = int(f.read().strip())
+        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+    except Exception:
+        pass
+    try:
+        os.remove(_TUNNEL_URL_FILE)
+    except OSError:
+        pass
+    try:
+        os.remove(_TUNNEL_PID_FILE)
+    except OSError:
+        pass
+    t = threading.Thread(target=_run_cloudflared, daemon=True)
+    t.start()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await init_db()

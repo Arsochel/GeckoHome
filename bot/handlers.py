@@ -165,6 +165,8 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Admin
     if data == "admin" and is_super_admin(user_id):
         return await _handle_admin(query)
+    if data == "tunnel_restart" and is_super_admin(user_id):
+        return await _handle_tunnel_restart(query)
     if data == "add_user" and is_super_admin(user_id):
         return await _handle_add_user_prompt(query, ctx)
     if data.startswith("rm_user_") and is_super_admin(user_id):
@@ -410,6 +412,15 @@ async def _handle_sched_select_lamp(query, ctx, lamp):
             [InlineKeyboardButton("◀ Отмена", callback_data="schedules")],
         ]),
     )
+
+
+async def _handle_tunnel_restart(query):
+    await query.answer("🔄 Перезапуск туннеля...")
+    from main import restart_tunnel
+    await asyncio.to_thread(restart_tunnel)
+    kb = await admin_keyboard()
+    await _safe_edit(query, "⚙️ *Управление*\n━━━━━━━━━━━━━━━\n\n🔄 Туннель перезапущен, URL обновится через ~30с",
+                     parse_mode="Markdown", reply_markup=kb)
 
 
 async def _handle_admin(query):

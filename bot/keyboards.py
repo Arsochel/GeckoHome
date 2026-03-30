@@ -130,5 +130,6 @@ async def admin_keyboard() -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton("Нет пользователей", callback_data="noop")])
 
     rows.append([InlineKeyboardButton("➕ Добавить по ID", callback_data="add_user")])
+    rows.append([InlineKeyboardButton("🔄 Перезапустить туннель", callback_data="tunnel_restart")])
     rows.append([InlineKeyboardButton("◀ Назад",           callback_data="back_main")])
     return InlineKeyboardMarkup(rows)
