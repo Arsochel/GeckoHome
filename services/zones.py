@@ -1,0 +1,39 @@
+"""Зональная детекция геккона — общая логика для motion monitor и gecko_detect."""
+import cv2
+import numpy as np
+
+# Разрешение в котором откалиброваны зоны (DISP_W x DISP_H из gecko_detect.py)
+ZONE_W, ZONE_H = 450, 800
+
+PRESET_ZONES = [
+    {"name": "skull",   "pts": [(67, 460), (77, 515), (102, 539), (109, 580), (130, 587), (141, 547), (164, 547), (178, 609), (192, 622), (266, 575), (310, 451), (317, 427), (328, 392), (309, 347), (222, 320), (138, 334), (123, 383), (80, 412), (71, 436)]},
+    {"name": "water",   "pts": [(374, 451), (329, 464), (310, 494), (331, 564), (398, 613), (447, 589), (446, 491), (390, 449)]},
+    {"name": "hammock", "pts": [(8, 212), (14, 315), (64, 382), (134, 399), (202, 399), (299, 423), (407, 420), (447, 408), (447, 307), (355, 303), (282, 293), (216, 256), (154, 195), (118, 135), (105, 127), (83, 172), (64, 191), (18, 195), (6, 197)]},
+]
+
+PRESET_ZONES_NP = [np.array(z["pts"], dtype=np.int32) for z in PRESET_ZONES]
+
+_skull_pts = next(z["pts"] for z in PRESET_ZONES if z["name"] == "skull")
+SKULL_CX   = int(np.mean([p[0] for p in _skull_pts]))
+SKULL_CY   = int(np.mean([p[1] for p in _skull_pts]))
+
+
+def detect_zone(cx: int, cy: int) -> str:
+    """Определяет зону по центру bbox в координатах ZONE_W x ZONE_H."""
+    for i, pts_np in enumerate(PRESET_ZONES_NP):
+        if cv2.pointPolygonTest(pts_np, (cx, cy), False) >= 0:
+            return PRESET_ZONES[i]["name"]
+    dx, dy = cx - SKULL_CX, cy - SKULL_CY
+    if abs(dx) > abs(dy):
+        return "right of skull" if dx > 0 else "left of skull"
+    return "below skull" if dy > 0 else "above skull"
+
+
+def detect_zone_in_frame(frame) -> tuple[str | None, float | None]:
+    """
+    Принимает уже повёрнутый кадр произвольного размера,
+    ресайзит в пространство зон и запускает детекцию через YOLO.
+    Возвращает (zone, confidence) или (None, None) если геккон не найден.
+    Требует что YOLO модель уже загружена и передана через _yolo_model.
+    """
+    raise NotImplementedError("use detect_zone() directly with YOLO results")

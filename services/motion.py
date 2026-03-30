@@ -12,10 +12,11 @@ os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 import cv2
 import httpx
 
-from config import CAMERA_RTSP_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS
+from config import CAMERA_RTSP_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS, YOLO_MODEL_PATH
 import shutil
 
-from database import save_photo, add_motion_event, set_gecko_state
+from database import save_photo, add_motion_event, set_gecko_state, log_gecko_zone
+from services.zones import detect_zone, ZONE_W, ZONE_H
 
 _last_motion_time: datetime | None = None
 
@@ -45,9 +46,10 @@ MOTION_THRESHOLD = 25      # порог разницы пикселей (0–255
 MOTION_MIN_AREA  = 1342    # мин. площадь контура чтобы считать движением
 MOTION_DEBUG     = True    # сохранять дебаг-кадр (доступен на /api/motion/debug)
 _DEBUG_FRAME_PATH = os.path.join(tempfile.gettempdir(), "gecko_motion_debug.jpg")
-MOTION_TIMEOUT   = 45      # секунд без движения → конец сессии
+MOTION_TIMEOUT    = 45      # секунд без движения → конец сессии
 SNAPSHOT_INTERVAL = 10     # секунд между снапшотами во время движения
-MIN_FRAMES       = 1       # минимум кадров чтобы отправить видео
+MIN_FRAMES        = 1      # минимум кадров чтобы отправить видео
+YOLO_INTERVAL     = 5      # секунд между запусками YOLO детекции зоны
 # ───────────────────────────────────────────────────────────────────────────
 
 
@@ -144,6 +146,18 @@ def _compile_video_sync(snapshot_paths: list[str]) -> str | None:
     return None
 
 
+_yolo_model = None
+
+
+def _get_yolo():
+    global _yolo_model
+    if _yolo_model is None and YOLO_MODEL_PATH and os.path.exists(YOLO_MODEL_PATH):
+        from ultralytics import YOLO
+        _yolo_model = YOLO(YOLO_MODEL_PATH)
+        print(f"[Motion] YOLO loaded: {YOLO_MODEL_PATH}")
+    return _yolo_model
+
+
 class MotionMonitor:
     def __init__(self):
         self._task: asyncio.Task | None = None
@@ -201,6 +215,7 @@ class MotionMonitor:
         motion_active  = False
         last_motion_t  = 0.0
         last_snap_t    = 0.0
+        last_yolo_t    = 0.0
         snapshots: list[str] = []
 
         try:
@@ -279,6 +294,27 @@ class MotionMonitor:
                                 os.unlink(p)
                             except Exception:
                                 pass
+
+                # YOLO зональная детекция каждые YOLO_INTERVAL секунд
+                if now - last_yolo_t >= YOLO_INTERVAL:
+                    last_yolo_t = now
+                    model = _get_yolo()
+                    if model is not None:
+                        try:
+                            zoomed = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+                            zoomed = cv2.resize(zoomed, (ZONE_W, ZONE_H))
+                            results = model(zoomed, verbose=False, conf=0.6)[0]
+                            if results.boxes:
+                                box = results.boxes[0]
+                                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                                conf = float(box.conf[0])
+                                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                                zone = detect_zone(cx, cy)
+                                asyncio.run_coroutine_threadsafe(
+                                    log_gecko_zone(zone, conf), self._loop
+                                )
+                        except Exception as e:
+                            print(f"[Motion] YOLO error: {e}")
 
                 prev_gray = gray
                 if self._stop_event.wait(0.3):
