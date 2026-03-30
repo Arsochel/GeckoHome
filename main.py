@@ -22,72 +22,55 @@ _TUNNEL_URL_FILE = os.path.join(os.path.dirname(__file__), "tunnel_url.txt")
 _TUNNEL_PID_FILE = os.path.join(os.path.dirname(__file__), "tunnel.pid")
 
 
-def _run_ngrok():
+def _run_cloudflared():
     import subprocess
+    import re
     import time
-    import urllib.request
 
-    port   = os.getenv("SERVER_PORT", "8000")
-    token  = os.getenv("NGROK_AUTHTOKEN", "")
-    domain = os.getenv("NGROK_DOMAIN", "")
-    delay  = 10
-
-    # если домен статический — сразу пишем URL, не ждём API
-    if domain:
-        with open(_TUNNEL_URL_FILE, "w") as f:
-            f.write(f"https://{domain}")
+    port  = os.getenv("SERVER_PORT", "8000")
+    delay = 60
 
     while True:
         try:
-            cmd = ["ngrok", "http", port, "--authtoken", token, "--log", "stdout"]
-            if domain:
-                cmd += ["--domain", domain]
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                os.remove(_TUNNEL_URL_FILE)
+            except OSError:
+                pass
+            proc = subprocess.Popen(
+                ["cloudflared", "tunnel", "--url", f"http://localhost:{port}"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            )
             with open(_TUNNEL_PID_FILE, "w") as f:
                 f.write(str(proc.pid))
 
-            if domain:
-                print(f"[ngrok] https://{domain}")
-                delay = 10
-            else:
-                # динамический домен — ждём URL через локальный API
-                try:
-                    os.remove(_TUNNEL_URL_FILE)
-                except OSError:
-                    pass
-                for _ in range(30):
-                    time.sleep(1)
-                    try:
-                        with urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=2) as r:
-                            data = json.loads(r.read())
-                        tunnels = data.get("tunnels", [])
-                        https = next((t["public_url"] for t in tunnels if t["public_url"].startswith("https")), None)
-                        if https:
-                            with open(_TUNNEL_URL_FILE, "w") as f:
-                                f.write(https)
-                            print(f"[ngrok] {https}")
-                            delay = 10
-                            break
-                    except Exception:
-                        pass
+            for line in proc.stderr:
+                line = line.decode(errors="ignore").strip()
+                m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
+                if m:
+                    url = m.group(0)
+                    with open(_TUNNEL_URL_FILE, "w") as f:
+                        f.write(url)
+                    print(f"[cloudflared] {url}")
+                    delay = 60
+                    break
 
             proc.wait()
         except FileNotFoundError:
-            print("[ngrok] not found, skipping")
+            print("[cloudflared] not found, skipping")
             return
         except Exception as e:
-            print(f"[ngrok] error: {e}")
+            print(f"[cloudflared] error: {e}")
         time.sleep(delay)
-        delay = min(delay * 2, 300)
+        delay = min(delay * 2, 1800)
 
 
 async def _start_tunnel():
-    t = threading.Thread(target=_run_ngrok, daemon=True)
+    t = threading.Thread(target=_run_cloudflared, daemon=True)
     t.start()
 
 
 def restart_tunnel():
-    """Убивает ngrok и запускает новый. Вызывается из бота."""
+    """Убивает cloudflared и запускает новый. Вызывается из бота."""
     import subprocess
     try:
         with open(_TUNNEL_PID_FILE) as f:
@@ -103,7 +86,7 @@ def restart_tunnel():
         os.remove(_TUNNEL_PID_FILE)
     except OSError:
         pass
-    t = threading.Thread(target=_run_ngrok, daemon=True)
+    t = threading.Thread(target=_run_cloudflared, daemon=True)
     t.start()
 
 
