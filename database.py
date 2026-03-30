@@ -107,6 +107,17 @@ async def init_db():
             """)
         except Exception:
             pass
+        try:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS gecko_zone_events (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    occurred_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    zone        TEXT NOT NULL,
+                    confidence  REAL
+                )
+            """)
+        except Exception:
+            pass
         await db.commit()
 
 
@@ -333,6 +344,28 @@ async def get_gecko_state() -> tuple[str | None, datetime | None]:
             if not row:
                 return None, None
             return row["state"], datetime.fromisoformat(row["updated_at"])
+
+
+# ── Gecko zone ──
+
+async def get_gecko_zone() -> tuple[str | None, datetime | None]:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT zone, occurred_at FROM gecko_zone_events ORDER BY occurred_at DESC LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return None, None
+            return row["zone"], datetime.fromisoformat(row["occurred_at"])
+
+
+async def get_gecko_zone_history(limit: int = 20) -> list[dict]:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT zone, occurred_at FROM gecko_zone_events ORDER BY occurred_at DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
 
 async def get_feeding_history(limit: int = 10) -> list[datetime]:

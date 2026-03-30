@@ -1,7 +1,17 @@
 from datetime import datetime
 
 from services import tuya
-from database import get_last_feeding_cached, get_gecko_state
+from database import get_last_feeding_cached, get_gecko_state, get_gecko_zone
+
+_ZONE_LABELS = {
+    "skull":         "на черепе",
+    "water":         "у поилки",
+    "hammock":       "на гамаке",
+    "left of skull": "слева от черепа",
+    "right of skull":"справа от черепа",
+    "below skull":   "под черепом",
+    "above skull":   "над черепом",
+}
 
 _STATE_LABELS = {
     "sleeping":    "💀 Спит",
@@ -25,16 +35,27 @@ def _lamp_line(s: dict) -> str:
     return "⚪️ недоступна"
 
 
+def _ago_str(updated: datetime | None) -> str:
+    if not updated:
+        return ""
+    diff = int((datetime.now() - updated).total_seconds() // 60)
+    return f" _({diff} мин назад)_" if diff > 0 else " _(только что)_"
+
+
 async def _state_line() -> str:
     state, updated = await get_gecko_state()
     if not state:
         return ""
-    ago = ""
-    if updated:
-        diff = int((datetime.now() - updated).total_seconds() // 60)
-        ago = f" _({diff} мин назад)_" if diff > 0 else " _(только что)_"
     label = _STATE_LABELS.get(state, state)
-    return f"🦎 Состояние:     *{label}*{ago}\n"
+    return f"🦎 Состояние:     *{label}*{_ago_str(updated)}\n"
+
+
+async def _zone_line() -> str:
+    zone, updated = await get_gecko_zone()
+    if not zone:
+        return ""
+    label = _ZONE_LABELS.get(zone, zone)
+    return f"📍 Место:            *{label}*{_ago_str(updated)}\n"
 
 
 def _feeding_line() -> str:
@@ -57,6 +78,7 @@ async def user_status_text() -> str:
         f"━━━━━━━━━━━━━━━\n"
         f"\n"
         f"{await _state_line()}"
+        f"{await _zone_line()}"
         f"🌡 Температура:  *{temp_str}*\n"
         f"💧 Влажность:      *{hum_str}*\n"
         f"\n"
@@ -81,6 +103,7 @@ async def status_text() -> str:
         f"━━━━━━━━━━━━━━━\n"
         f"\n"
         f"{await _state_line()}"
+        f"{await _zone_line()}"
         f"🔦 UV-лампа:       {_lamp_line(uv)}\n"
         f"🔥 Тепловая:       {_lamp_line(heat)}\n"
         f"\n"

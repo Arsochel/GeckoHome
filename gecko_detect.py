@@ -5,6 +5,7 @@
 """
 import os
 import time
+import sqlite3
 import threading
 import cv2
 import numpy as np
@@ -50,6 +51,30 @@ colors      = [(0, 165, 255), (255, 0, 255), (0, 255, 255), (255, 165, 0)]
 mouse_pos   = [0, 0]
 current_pts = []  # точки текущей рисуемой зоны
 zones       = []  # list of {"name": str, "pts": [(x,y),...]}
+
+DB_PATH = os.path.join(os.path.dirname(__file__), "gecko.db")
+_last_zone: str | None = None
+_last_zone_time: float = 0
+_ZONE_DEBOUNCE = 10  # секунд — не писать одну и ту же зону повторно
+
+
+def _log_zone(zone: str, conf: float):
+    global _last_zone, _last_zone_time
+    now = time.time()
+    if zone == _last_zone and now - _last_zone_time < _ZONE_DEBOUNCE:
+        return
+    _last_zone = zone
+    _last_zone_time = now
+    try:
+        con = sqlite3.connect(DB_PATH)
+        con.execute(
+            "INSERT INTO gecko_zone_events (zone, confidence) VALUES (?, ?)",
+            (zone, round(conf, 3)),
+        )
+        con.commit()
+        con.close()
+    except Exception as e:
+        print(f"\n[Zone DB] error: {e}")
 
 
 def _relative_to_skull(cx, cy):
@@ -132,6 +157,7 @@ while True:
         conf = float(box.conf[0])
         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
         gecko_zone = _detect_zone(cx, cy)
+        _log_zone(gecko_zone, conf)
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
         cv2.circle(frame, (cx, cy), 4, (0, 255, 0), -1)
         cv2.putText(frame, f"gecko {conf:.2f}", (x1, y1 - 22),
