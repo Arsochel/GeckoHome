@@ -38,7 +38,8 @@ def _run_ngrok():
             except OSError:
                 pass
             proc = subprocess.Popen(
-                ["ngrok", "http", port, "--authtoken", token, "--log", "stdout"],
+                ["ngrok", "http", port, "--authtoken", token, "--log", "stdout",
+                 "--request-header-add", "ngrok-skip-browser-warning:true"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             with open(_TUNNEL_PID_FILE, "w") as f:
