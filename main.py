@@ -27,40 +27,49 @@ def _run_ngrok():
     import time
     import urllib.request
 
-    port     = os.getenv("SERVER_PORT", "8000")
-    token    = os.getenv("NGROK_AUTHTOKEN", "")
-    delay    = 10
+    port   = os.getenv("SERVER_PORT", "8000")
+    token  = os.getenv("NGROK_AUTHTOKEN", "")
+    domain = os.getenv("NGROK_DOMAIN", "")
+    delay  = 10
+
+    # если домен статический — сразу пишем URL, не ждём API
+    if domain:
+        with open(_TUNNEL_URL_FILE, "w") as f:
+            f.write(f"https://{domain}")
 
     while True:
         try:
-            try:
-                os.remove(_TUNNEL_URL_FILE)
-            except OSError:
-                pass
-            proc = subprocess.Popen(
-                ["ngrok", "http", port, "--authtoken", token, "--log", "stdout",
-                 "--request-header-add", "ngrok-skip-browser-warning:true"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
+            cmd = ["ngrok", "http", port, "--authtoken", token, "--log", "stdout"]
+            if domain:
+                cmd += ["--domain", domain]
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             with open(_TUNNEL_PID_FILE, "w") as f:
                 f.write(str(proc.pid))
 
-            # ждём пока ngrok поднимет туннель и отдаст URL через локальный API
-            for _ in range(30):
-                time.sleep(1)
+            if domain:
+                print(f"[ngrok] https://{domain}")
+                delay = 10
+            else:
+                # динамический домен — ждём URL через локальный API
                 try:
-                    with urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=2) as r:
-                        data = json.loads(r.read())
-                    tunnels = data.get("tunnels", [])
-                    https = next((t["public_url"] for t in tunnels if t["public_url"].startswith("https")), None)
-                    if https:
-                        with open(_TUNNEL_URL_FILE, "w") as f:
-                            f.write(https)
-                        print(f"[ngrok] {https}")
-                        delay = 10
-                        break
-                except Exception:
+                    os.remove(_TUNNEL_URL_FILE)
+                except OSError:
                     pass
+                for _ in range(30):
+                    time.sleep(1)
+                    try:
+                        with urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=2) as r:
+                            data = json.loads(r.read())
+                        tunnels = data.get("tunnels", [])
+                        https = next((t["public_url"] for t in tunnels if t["public_url"].startswith("https")), None)
+                        if https:
+                            with open(_TUNNEL_URL_FILE, "w") as f:
+                                f.write(https)
+                            print(f"[ngrok] {https}")
+                            delay = 10
+                            break
+                    except Exception:
+                        pass
 
             proc.wait()
         except FileNotFoundError:
