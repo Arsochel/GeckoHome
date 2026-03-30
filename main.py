@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import re
 import threading
 from datetime import datetime
 from contextlib import asynccontextmanager
@@ -20,34 +19,18 @@ from routers import auth, admin, devices, schedules
 
 
 _TUNNEL_URL_FILE = os.path.join(os.path.dirname(__file__), "tunnel_url.txt")
-
-
 _TUNNEL_PID_FILE = os.path.join(os.path.dirname(__file__), "tunnel.pid")
 
 
-def _cloudflared_running() -> bool:
-    """True если cloudflared процесс из прошлого запуска ещё жив."""
-    try:
-        with open(_TUNNEL_PID_FILE) as f:
-            pid = int(f.read().strip())
-        import subprocess
-        out = subprocess.run(
-            ["tasklist", "/fi", f"PID eq {pid}", "/fo", "csv", "/nh"],
-            capture_output=True, text=True,
-        ).stdout
-        return str(pid) in out
-    except Exception:
-        return False
-
-
-def _run_cloudflared():
+def _run_ngrok():
     import subprocess
     import time
-    port = os.getenv("SERVER_PORT", "8000")
-    if _cloudflared_running():
-        print("[Cloudflare] process alive, reusing tunnel")
-        return
-    delay = 60  # начальная пауза между перезапусками
+    import urllib.request
+
+    port     = os.getenv("SERVER_PORT", "8000")
+    token    = os.getenv("NGROK_AUTHTOKEN", "")
+    delay    = 10
+
     while True:
         try:
             try:
@@ -55,37 +38,46 @@ def _run_cloudflared():
             except OSError:
                 pass
             proc = subprocess.Popen(
-                ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{port}"],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                ["ngrok", "http", port, "--authtoken", token, "--log", "stdout"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             with open(_TUNNEL_PID_FILE, "w") as f:
                 f.write(str(proc.pid))
-            for line in proc.stdout:
-                text = line.decode(errors="ignore").strip()
-                m = re.search(r"https://[\w-]+\.trycloudflare\.com", text)
-                if m:
-                    url = m.group(0)
-                    with open(_TUNNEL_URL_FILE, "w") as f:
-                        f.write(url)
-                    print(f"[Cloudflare] {url}")
-                    delay = 60
+
+            # ждём пока ngrok поднимет туннель и отдаст URL через локальный API
+            for _ in range(30):
+                time.sleep(1)
+                try:
+                    with urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=2) as r:
+                        data = json.loads(r.read())
+                    tunnels = data.get("tunnels", [])
+                    https = next((t["public_url"] for t in tunnels if t["public_url"].startswith("https")), None)
+                    if https:
+                        with open(_TUNNEL_URL_FILE, "w") as f:
+                            f.write(https)
+                        print(f"[ngrok] {https}")
+                        delay = 10
+                        break
+                except Exception:
+                    pass
+
             proc.wait()
         except FileNotFoundError:
-            print("[Cloudflare] not found, skipping")
+            print("[ngrok] not found, skipping")
             return
         except Exception as e:
-            print(f"[Cloudflare] error: {e}")
+            print(f"[ngrok] error: {e}")
         time.sleep(delay)
-        delay = min(delay * 2, 1800)  # экспоненциальный backoff, макс 30 мин
+        delay = min(delay * 2, 300)
 
 
-async def _start_cloudflared():
-    t = threading.Thread(target=_run_cloudflared, daemon=True)
+async def _start_tunnel():
+    t = threading.Thread(target=_run_ngrok, daemon=True)
     t.start()
 
 
 def restart_tunnel():
-    """Убивает старый cloudflared и запускает новый. Вызывается из бота."""
+    """Убивает ngrok и запускает новый. Вызывается из бота."""
     import subprocess
     try:
         with open(_TUNNEL_PID_FILE) as f:
@@ -101,7 +93,7 @@ def restart_tunnel():
         os.remove(_TUNNEL_PID_FILE)
     except OSError:
         pass
-    t = threading.Thread(target=_run_cloudflared, daemon=True)
+    t = threading.Thread(target=_run_ngrok, daemon=True)
     t.start()
 
 
@@ -125,7 +117,7 @@ async def lifespan(_: FastAPI):
             await camera.start_mediamtx(MEDIAMTX_BIN)
         except Exception as e:
             print(f"Camera mediamtx failed: {e}")
-    asyncio.create_task(_start_cloudflared())
+    asyncio.create_task(_start_tunnel())
     yield
     stop_scheduler()
     await motion_monitor.stop()

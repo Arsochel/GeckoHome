@@ -26,6 +26,7 @@ MEDIAMTX_BIN = os.getenv("MEDIAMTX_BIN", "mediamtx")
 YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "")
 
 STREAM_BASE_URL = os.getenv("STREAM_BASE_URL", "http://localhost:8080")
+NGROK_AUTHTOKEN = os.getenv("NGROK_AUTHTOKEN", "")
 
 # tinytuya local keys (optional, enables local LAN control without cloud)
 DEVICE_LOCAL = {
