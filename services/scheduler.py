@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -23,12 +24,43 @@ async def record_sensor_readings():
     await log_sensor_reading(temp, hum)
 
 
+def _is_lamp_on_now(hour: int, minute: int, duration_h: float) -> bool:
+    """Должна ли лампа сейчас гореть по расписанию."""
+    now = datetime.now()
+    start = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    from datetime import timedelta
+    end = start + timedelta(hours=duration_h)
+    if end.day == start.day:
+        return start <= now < end
+    # переход через полночь
+    return now >= start or now < end
+
+
+async def _recover_lamps(schedules: list[dict]):
+    """При старте выключает лампы которые должны быть выключены."""
+    lamps_should_be_on: dict[str, bool] = {}
+    for s in schedules:
+        if s.get("paused"):
+            continue
+        if _is_lamp_on_now(s["hour"], s["minute"], s["duration_h"]):
+            lamps_should_be_on[s["lamp_type"]] = True
+
+    for lamp in ("uv", "heat"):
+        status = tuya.get_lamp_status(lamp)
+        if status.get("switch") is True and not lamps_should_be_on.get(lamp):
+            print(f"[Scheduler] recovery: turning off {lamp} lamp (outside schedule window)")
+            tuya.switch_lamp(lamp, False)
+            await log_lamp_event(lamp, "off", "scheduler:recovery")
+
+
 async def load_schedules():
     saved = await get_schedules()
     if not saved:
         default_id = "uv_lamp_midnight"
         await save_schedule(default_id, "uv", 0, 0, 60)
         saved = await get_schedules()
+
+    await _recover_lamps(saved)
 
     for s in saved:
         scheduler.add_job(
