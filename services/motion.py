@@ -303,7 +303,7 @@ class MotionMonitor:
                         try:
                             zoomed = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
                             zoomed = cv2.resize(zoomed, (ZONE_W, ZONE_H))
-                            results = model(zoomed, verbose=False, conf=0.6)[0]
+                            results = model(zoomed, verbose=False, conf=0.4)[0]
                             if results.boxes:
                                 box = results.boxes[0]
                                 x1, y1, x2, y2 = map(int, box.xyxy[0])
