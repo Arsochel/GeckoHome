@@ -159,6 +159,8 @@ def _write_mediamtx_config():
         "paths:\n"
         "  gecko:\n"
         f"    source: {CAMERA_RTSP_URL}\n"
+        "    sourceOnDemand: yes\n"
+        "    rtspTransport: tcp\n"
     )
     with open(MEDIAMTX_CONFIG_PATH, "w") as f:
         f.write(config)
