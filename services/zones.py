@@ -17,12 +17,26 @@ _skull_pts = next(z["pts"] for z in PRESET_ZONES if z["name"] == "skull")
 SKULL_CX   = int(np.mean([p[0] for p in _skull_pts]))
 SKULL_CY   = int(np.mean([p[1] for p in _skull_pts]))
 
+_water_pts = next(z["pts"] for z in PRESET_ZONES if z["name"] == "water")
+WATER_CX   = int(np.mean([p[0] for p in _water_pts]))
+WATER_CY   = int(np.mean([p[1] for p in _water_pts]))
+
+
+def _dist2(ax, ay, bx, by) -> float:
+    return (ax - bx) ** 2 + (ay - by) ** 2
+
 
 def detect_zone(cx: int, cy: int) -> str:
     """Определяет зону по центру bbox в координатах ZONE_W x ZONE_H."""
+    # skull и hammock — по полигону
     for i, pts_np in enumerate(PRESET_ZONES_NP):
+        if PRESET_ZONES[i]["name"] == "water":
+            continue
         if cv2.pointPolygonTest(pts_np, (cx, cy), False) >= 0:
             return PRESET_ZONES[i]["name"]
+    # water — по расстоянию: если геккон ближе к поилке чем к черепу → у поилки
+    if _dist2(cx, cy, WATER_CX, WATER_CY) < _dist2(cx, cy, SKULL_CX, SKULL_CY):
+        return "water"
     dx, dy = cx - SKULL_CX, cy - SKULL_CY
     if abs(dx) > abs(dy):
         return "right of skull" if dx > 0 else "left of skull"
