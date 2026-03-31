@@ -1,7 +1,14 @@
 """
 Живой мониторинг геккона через YOLO.
 Запуск: python gecko_detect.py
-Левый клик — добавить точку зоны, Enter — завершить, правый клик — отменить
+
+Клавиши:
+  Левый клик — добавить точку
+  Правый клик — отменить последнюю точку
+  Enter — завершить зону
+  1/2/3 — начать перерисовку зоны skull/water/hammock
+  Esc — отменить текущее рисование
+  Q — выход
 """
 import os
 import time
@@ -32,19 +39,23 @@ if not cap.isOpened():
     exit(1)
 
 print("[YOLO] stream opened, press Q to quit")
-print("  Left click — add point, Enter — finish zone, Right click — undo")
+print("  1/2/3 — redraw skull/water/hammock zone")
+print("  Left click — add point, Enter — finish, Right click — undo, Esc — cancel")
 
 zone_names  = [z["name"] for z in PRESET_ZONES]
 colors      = [(0, 165, 255), (255, 0, 255), (0, 255, 255), (255, 165, 0)]
 
-mouse_pos   = [0, 0]
-current_pts = []  # точки текущей рисуемой зоны
-zones       = []  # list of {"name": str, "pts": [(x,y),...]}
+mouse_pos    = [0, 0]
+current_pts  = []
+editing_zone = [None]   # имя зоны которую сейчас перерисовываем (None = новая)
+
+# рабочая копия PRESET_ZONES — можно изменять
+working_zones = [dict(z) for z in PRESET_ZONES]
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "gecko.db")
 _last_zone: str | None = None
 _last_zone_time: float = 0
-_ZONE_DEBOUNCE = 10  # секунд — не писать одну и ту же зону повторно
+_ZONE_DEBOUNCE = 10
 
 
 def _log_zone(zone: str, conf: float):
@@ -66,20 +77,53 @@ def _log_zone(zone: str, conf: float):
         print(f"\n[Zone DB] error: {e}")
 
 
+def _save_zones_to_file():
+    """Перезаписывает PRESET_ZONES в services/zones.py."""
+    zones_py = os.path.join(os.path.dirname(__file__), "services", "zones.py")
+    with open(zones_py) as f:
+        src = f.read()
 
-def _current_zone_name():
-    idx = len(zones)
-    return zone_names[idx] if idx < len(zone_names) else f"zone{idx}"
+    import re
+    new_list = "PRESET_ZONES = [\n"
+    for z in working_zones:
+        pts_str = ", ".join(f"({x}, {y})" for x, y in z["pts"])
+        new_list += f'    {{"name": "{z["name"]}",   "pts": [{pts_str}]}},\n'
+    new_list += "]"
+
+    src = re.sub(r"PRESET_ZONES = \[.*?\]", new_list, src, flags=re.DOTALL)
+    with open(zones_py, "w") as f:
+        f.write(src)
+    print(f"\n[Zone] saved to services/zones.py")
 
 
 def _finish_zone():
+    global editing_zone
     if len(current_pts) < 3:
         print("[Zone] need at least 3 points")
         return
-    name = _current_zone_name()
-    zones.append({"name": name, "pts": list(current_pts)})
-    print(f"[Zone] '{name}': {current_pts}")
+    name = editing_zone[0]
+    if name:
+        # заменяем существующую зону
+        for z in working_zones:
+            if z["name"] == name:
+                z["pts"] = list(current_pts)
+                print(f"[Zone] updated '{name}': {current_pts}")
+                break
+    else:
+        # добавляем новую (не должно быть нужно обычно)
+        idx = len([z for z in working_zones if z["name"] not in zone_names])
+        name = f"zone{idx}"
+        working_zones.append({"name": name, "pts": list(current_pts)})
+        print(f"[Zone] added '{name}': {current_pts}")
     current_pts.clear()
+    editing_zone[0] = None
+    _save_zones_to_file()
+
+
+def _start_edit(zone_name: str):
+    current_pts.clear()
+    editing_zone[0] = zone_name
+    print(f"\n[Zone] redrawing '{zone_name}' — click points, Enter to finish, Esc to cancel")
 
 
 def _on_mouse(event, x, y, flags, param):
@@ -98,8 +142,6 @@ def _on_mouse(event, x, y, flags, param):
     elif event == cv2.EVENT_RBUTTONDOWN:
         if current_pts:
             print(f"[Zone] removed point {current_pts.pop()}")
-        elif zones:
-            print(f"[Zone] removed zone '{zones.pop()['name']}'")
 
 
 latest = [None]
@@ -145,16 +187,17 @@ while True:
     zone_str = gecko_zone if gecko_zone else "-"
     print(f"\r[YOLO] gecko: {'YES' if gecko_zone else 'NO '} | zone: {zone_str}   ", end="", flush=True)
 
-    # полупрозрачная заливка зон за один проход
-    all_zones    = PRESET_ZONES + zones
-    all_zones_np = PRESET_ZONES_NP + [np.array(z["pts"], dtype=np.int32) for z in zones]
+    # полупрозрачная заливка зон
+    working_zones_np = [np.array(z["pts"], dtype=np.int32) for z in working_zones]
     overlay = frame.copy()
-    for i, pts_np in enumerate(all_zones_np):
+    for i, pts_np in enumerate(working_zones_np):
         cv2.fillPoly(overlay, [pts_np], colors[i % len(colors)])
     cv2.addWeighted(overlay, 0.15, frame, 0.85, 0, frame)
-    for i, (zone, pts_np) in enumerate(zip(all_zones, all_zones_np)):
+    for i, (zone, pts_np) in enumerate(zip(working_zones, working_zones_np)):
         c = colors[i % len(colors)]
-        cv2.polylines(frame, [pts_np], isClosed=True, color=c, thickness=1)
+        # подсвечиваем редактируемую зону ярче
+        thickness = 2 if zone["name"] == editing_zone[0] else 1
+        cv2.polylines(frame, [pts_np], isClosed=True, color=c, thickness=thickness)
         cv2.putText(frame, zone["name"], (zone["pts"][0][0] + 4, zone["pts"][0][1] + 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, c, 1)
 
@@ -166,16 +209,30 @@ while True:
                           color=(255, 255, 255), thickness=1)
         cv2.line(frame, current_pts[-1], tuple(mouse_pos), (255, 255, 255), 1)
 
-    cv2.putText(frame, f"({mouse_pos[0]}, {mouse_pos[1]}) | next: {_current_zone_name()} [Enter]",
-                (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+    # статусная строка
+    if editing_zone[0]:
+        hint = f"editing: {editing_zone[0]} ({len(current_pts)} pts) | Enter=finish  Esc=cancel"
+    else:
+        hint = "1=skull  2=water  3=hammock  Q=quit"
+    cv2.putText(frame, hint, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
 
     cv2.imshow("Gecko Detect", frame)
     key = cv2.waitKey(1) & 0xFF
     if key == ord("q"):
         break
+    elif key == ord("1"):
+        _start_edit("skull")
+    elif key == ord("2"):
+        _start_edit("water")
+    elif key == ord("3"):
+        _start_edit("hammock")
     elif key == 13:  # Enter
         if current_pts:
             _finish_zone()
+    elif key == 27:  # Esc
+        current_pts.clear()
+        editing_zone[0] = None
+        print("\n[Zone] cancelled")
 
 cap.release()
 cv2.destroyAllWindows()
