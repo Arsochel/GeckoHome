@@ -34,24 +34,41 @@ def stream_url() -> str | None:
 
 
 
-def _camera_rows() -> list:
+def _camera_rows(lang: str = "ru") -> list:
     if not camera.is_configured():
         return []
-    rows = [
-        [
-            InlineKeyboardButton("📸 Снимок", callback_data="cam_snap"),
-            InlineKeyboardButton("🎬 Клип 30с", callback_data="cam_clip"),
-        ],
-        [
-            InlineKeyboardButton("🎥 Клип 3 мин", callback_data="cam_clip3"),
-        ],
-    ]
-    url = stream_url()
-    if url:
-        rows.append([InlineKeyboardButton("📡 Стрим", web_app=WebAppInfo(url=url))])
-    det_url = detect_stream_url()
-    if det_url:
-        rows.append([InlineKeyboardButton("🔍 Стрим+детект", web_app=WebAppInfo(url=det_url))])
+    if lang == "en":
+        rows = [
+            [
+                InlineKeyboardButton("📸 Snapshot", callback_data="cam_snap"),
+                InlineKeyboardButton("🎬 Clip 30s", callback_data="cam_clip"),
+            ],
+            [
+                InlineKeyboardButton("🎥 Clip 3 min", callback_data="cam_clip3"),
+            ],
+        ]
+        url = stream_url()
+        if url:
+            rows.append([InlineKeyboardButton("📡 Stream", web_app=WebAppInfo(url=url))])
+        det_url = detect_stream_url()
+        if det_url:
+            rows.append([InlineKeyboardButton("🔍 Stream+detect", web_app=WebAppInfo(url=det_url))])
+    else:
+        rows = [
+            [
+                InlineKeyboardButton("📸 Снимок", callback_data="cam_snap"),
+                InlineKeyboardButton("🎬 Клип 30с", callback_data="cam_clip"),
+            ],
+            [
+                InlineKeyboardButton("🎥 Клип 3 мин", callback_data="cam_clip3"),
+            ],
+        ]
+        url = stream_url()
+        if url:
+            rows.append([InlineKeyboardButton("📡 Стрим", web_app=WebAppInfo(url=url))])
+        det_url = detect_stream_url()
+        if det_url:
+            rows.append([InlineKeyboardButton("🔍 Стрим+детект", web_app=WebAppInfo(url=det_url))])
     return rows
 
 
@@ -62,7 +79,8 @@ async def _lang_button(user_id: int) -> InlineKeyboardButton:
 
 
 async def user_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    rows = _camera_rows()
+    lang = await get_lang(user_id)
+    rows = _camera_rows(lang)
     rows.append([await _lang_button(user_id)])
     return InlineKeyboardMarkup(rows)
 
@@ -90,7 +108,7 @@ async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
                 f"🔥 Heat: {'off ➜ on' if not heat_on else 'on ➜ off'}",
                 callback_data="heat_on" if not heat_on else "heat_off",
             )],
-            *_camera_rows(),
+            *_camera_rows(lang),
             [InlineKeyboardButton("🍎 Fed", callback_data="fed")],
             [InlineKeyboardButton("📋 Schedules", callback_data="schedules")],
             [InlineKeyboardButton(admin_label, callback_data="admin")],
@@ -107,7 +125,7 @@ async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
                 f"🔥 Тепловая: {'выкл ➜ вкл' if not heat_on else 'вкл ➜ выкл'}",
                 callback_data="heat_on" if not heat_on else "heat_off",
             )],
-            *_camera_rows(),
+            *_camera_rows(lang),
             [InlineKeyboardButton("🍎 Покормил", callback_data="fed")],
             [InlineKeyboardButton("📋 Расписания", callback_data="schedules")],
             [InlineKeyboardButton(admin_label, callback_data="admin")],
