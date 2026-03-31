@@ -374,8 +374,8 @@ async def get_gecko_state() -> tuple[str | None, datetime | None]:
 async def log_gecko_zone(zone: str, confidence: float | None = None):
     async with _db(write=True) as db:
         await db.execute(
-            "INSERT INTO gecko_zone_events (zone, confidence) VALUES (?, ?)",
-            (zone, round(confidence, 3) if confidence is not None else None),
+            "INSERT INTO gecko_zone_events (occurred_at, zone, confidence) VALUES (?, ?, ?)",
+            (datetime.now(), zone, round(confidence, 3) if confidence is not None else None),
         )
 
 
