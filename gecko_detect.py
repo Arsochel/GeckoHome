@@ -27,7 +27,7 @@ RTSP_URL   = os.getenv("CAMERA_RTSP_URL", "")
 from services.zones import PRESET_ZONES, PRESET_ZONES_NP, SKULL_CX, SKULL_CY, ZONE_W, ZONE_H, detect_zone
 DISP_W, DISP_H = ZONE_W, ZONE_H
 
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|video_codec;h264|thread_type;slice"
 
 model = YOLO(MODEL_PATH)
 print(f"[YOLO] model loaded: {MODEL_PATH}")
