@@ -27,13 +27,3 @@ def detect_zone(cx: int, cy: int) -> str:
     if abs(dx) > abs(dy):
         return "right of skull" if dx > 0 else "left of skull"
     return "below skull" if dy > 0 else "above skull"
-
-
-def detect_zone_in_frame(frame) -> tuple[str | None, float | None]:
-    """
-    Принимает уже повёрнутый кадр произвольного размера,
-    ресайзит в пространство зон и запускает детекцию через YOLO.
-    Возвращает (zone, confidence) или (None, None) если геккон не найден.
-    Требует что YOLO модель уже загружена и передана через _yolo_model.
-    """
-    raise NotImplementedError("use detect_zone() directly with YOLO results")

@@ -8,7 +8,6 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 
 from config import TELEGRAM_BOT_TOKEN
 from database import init_db, load_last_feeding
-from services import tuya
 from bot.handlers import cmd_start, cmd_status, button_handler, message_handler
 
 BOT_LOG_PORT = 8765

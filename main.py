@@ -127,7 +127,6 @@ app.include_router(admin.router)
 app.include_router(devices.router)
 app.include_router(schedules.router)
 
-import os
 import httpx as _httpx
 from fastapi import Request, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, Response
@@ -150,7 +149,6 @@ def _get_yolo():
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-    from fastapi.responses import FileResponse
     return FileResponse("static/favicon.ico", media_type="image/x-icon")
 
 

@@ -38,9 +38,6 @@ def _find_dataset_dir() -> str | None:
 _DATASET_IMAGES_DIR = _find_dataset_dir()
 
 
-def get_last_motion_time() -> datetime | None:
-    return _last_motion_time
-
 # ── Настройки ──────────────────────────────────────────────────────────────
 MOTION_THRESHOLD = 25      # порог разницы пикселей (0–255)
 MOTION_MIN_AREA  = 1342    # мин. площадь контура чтобы считать движением

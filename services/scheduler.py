@@ -4,14 +4,12 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from services import tuya
 from services.highlights import update_gecko_state
-from config import DEVICE_IDS
 from database import get_schedules, save_schedule, log_lamp_event, log_sensor_reading
 
 scheduler = AsyncIOScheduler()
 
 
 async def lamp_schedule(lamp_type: str, duration_h: float):
-    device_id = DEVICE_IDS[f"{lamp_type}_lamp"]
     tuya.switch_lamp(lamp_type, True)
     await log_lamp_event(lamp_type, "on", "scheduler")
     await asyncio.sleep(duration_h * 3600)
