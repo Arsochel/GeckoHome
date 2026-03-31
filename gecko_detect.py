@@ -90,7 +90,7 @@ def _save_zones_to_file():
         new_list += f'    {{"name": "{z["name"]}",   "pts": [{pts_str}]}},\n'
     new_list += "]"
 
-    src = re.sub(r"PRESET_ZONES = \[.*?\]", new_list, src, flags=re.DOTALL)
+    src = re.sub(r"PRESET_ZONES = \[[\s\S]*?\n\]", new_list, src)
     with open(zones_py, "w") as f:
         f.write(src)
     print(f"\n[Zone] saved to services/zones.py")
