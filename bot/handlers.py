@@ -15,7 +15,8 @@ from database import (
 )
 from bot.access import check_access, is_super_admin
 from bot.keyboards import main_keyboard, schedules_keyboard, admin_keyboard, stream_url
-from bot.i18n import get_lang, toggle_lang
+from bot.i18n import get_lang, set_lang, toggle_lang
+from database import get_user_lang
 from config import STREAM_BASE_URL
 from bot.formatters import status_text, user_status_text
 
@@ -36,23 +37,35 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 ]),
             )
         return
-    lang = get_lang(user.id)
-    text = await status_text(lang) if is_super_admin(user.id) else await user_status_text(lang)
-    msg = await update.message.reply_text(text, parse_mode="Markdown", reply_markup=await main_keyboard(user.id))
-    ctx.user_data["status_msg_id"] = msg.message_id
     # убираем reply keyboard если была
     try:
         tmp = await update.message.reply_text(".", reply_markup=ReplyKeyboardRemove())
         await tmp.delete()
     except Exception:
         pass
+    # показываем выбор языка если ещё не выбран
+    existing_lang = await get_user_lang(user.id)
+    if existing_lang is None:
+        await update.message.reply_text(
+            "🦎 *Gecko Home*\n\nChoose language / Выберите язык:",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_set_ru"),
+                InlineKeyboardButton("🇬🇧 English", callback_data="lang_set_en"),
+            ]]),
+        )
+        return
+    lang = existing_lang
+    text = await status_text(lang) if is_super_admin(user.id) else await user_status_text(lang)
+    msg = await update.message.reply_text(text, parse_mode="Markdown", reply_markup=await main_keyboard(user.id))
+    ctx.user_data["status_msg_id"] = msg.message_id
 
 
 async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not await check_access(user.id):
         return
-    lang = get_lang(user.id)
+    lang = await get_lang(user.id)
     text = await status_text(lang) if is_super_admin(user.id) else await user_status_text(lang)
     prev_id = ctx.user_data.get("status_msg_id")
     if prev_id:
@@ -100,8 +113,21 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "lang_toggle":
-        toggle_lang(user_id)
+        await toggle_lang(user_id)
         return await _handle_refresh(query, user_id)
+
+    if data in ("lang_set_ru", "lang_set_en"):
+        lang = data.replace("lang_set_", "")
+        await set_lang(user_id, lang)
+        text = await status_text(lang) if is_super_admin(user_id) else await user_status_text(lang)
+        kb = await main_keyboard(user_id)
+        msg = await query.message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+        ctx.user_data["status_msg_id"] = msg.message_id
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        return
 
     # Navigation
     if data in ("back_main", "refresh"):
@@ -278,7 +304,7 @@ async def _handle_deny(query, ctx, data):
 
 async def _handle_refresh(query, user_id):
     try:
-        lang = get_lang(user_id)
+        lang = await get_lang(user_id)
         text = await status_text(lang) if is_super_admin(user_id) else await user_status_text(lang)
         await _safe_edit(query, text, parse_mode="Markdown", reply_markup=await main_keyboard(user_id))
     except Exception:
@@ -297,7 +323,7 @@ async def _handle_lamp(query, user_id, lamp, on):
         result = f"❌ Ошибка: {lamp_name} не отвечает"
     await asyncio.sleep(1)
     try:
-        lang = get_lang(user_id)
+        lang = await get_lang(user_id)
         await _safe_edit(query,
             await status_text(lang) + f"\n\n{result}",
             parse_mode="Markdown", reply_markup=await main_keyboard(user_id),
@@ -322,7 +348,7 @@ async def _handle_snapshot(query, user_id):
     await log_user_action(u.id, u.username or u.first_name, "snapshot")
     await _safe_edit(query, "📸 Делаю снимок...")
     path = await camera.snapshot()
-    lang = get_lang(user_id)
+    lang = await get_lang(user_id)
     text = await status_text(lang) if is_super_admin(user_id) else await user_status_text(lang)
     kb = await main_keyboard(user_id)
     err_msg = "❌ Failed to take snapshot" if lang == "en" else "❌ Не удалось сделать снимок"
@@ -347,7 +373,7 @@ async def _handle_clip(query, user_id, duration: int = 30):
     await log_user_action(u.id, u.username or u.first_name, f"clip_{duration}")
     await _safe_edit(query, f"🎬 Записываю {label}...")
     path = await camera.clip(duration)
-    lang = get_lang(user_id)
+    lang = await get_lang(user_id)
     text = await status_text(lang) if is_super_admin(user_id) else await user_status_text(lang)
     kb = await main_keyboard(user_id)
     err_msg = "❌ Failed to record clip" if lang == "en" else "❌ Не удалось записать клип"
@@ -471,7 +497,7 @@ async def _handle_feeding_history(query):
 
 async def _handle_fed(query, user_id):
     await log_feeding()
-    lang = get_lang(user_id)
+    lang = await get_lang(user_id)
     text = await status_text(lang)
     await _safe_edit(query, text, parse_mode="Markdown", reply_markup=await main_keyboard(user_id))
 

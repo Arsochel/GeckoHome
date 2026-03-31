@@ -118,6 +118,29 @@ async def init_db():
             """)
         except Exception:
             pass
+        try:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS user_lang (
+                    user_id INTEGER PRIMARY KEY,
+                    lang    TEXT NOT NULL DEFAULT 'ru'
+                )
+            """)
+            # Populate existing allowed users with 'ru' by default
+            await db.execute("""
+                INSERT OR IGNORE INTO user_lang (user_id, lang)
+                SELECT user_id, 'ru' FROM allowed_users
+            """)
+            # Super admins default ru
+            for sa_id in (472863526, 1244886451, 454935896):
+                await db.execute(
+                    "INSERT OR IGNORE INTO user_lang (user_id, lang) VALUES (?, 'ru')", (sa_id,)
+                )
+            # @noemibenini gets English
+            await db.execute(
+                "INSERT OR REPLACE INTO user_lang (user_id, lang) VALUES (5157476563, 'en')"
+            )
+        except Exception:
+            pass
         await db.commit()
 
 
@@ -374,6 +397,21 @@ async def get_gecko_zone_history(limit: int = 20) -> list[dict]:
             (limit,),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_user_lang(user_id: int) -> str | None:
+    async with _db() as db:
+        async with db.execute("SELECT lang FROM user_lang WHERE user_id = ?", (user_id,)) as cur:
+            row = await cur.fetchone()
+            return row["lang"] if row else None
+
+
+async def set_user_lang(user_id: int, lang: str):
+    async with _db(write=True) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO user_lang (user_id, lang) VALUES (?, ?)",
+            (user_id, lang),
+        )
 
 
 async def get_feeding_history(limit: int = 10) -> list[datetime]:

@@ -55,23 +55,23 @@ def _camera_rows() -> list:
     return rows
 
 
-def _lang_button(user_id: int) -> InlineKeyboardButton:
-    lang = get_lang(user_id)
+async def _lang_button(user_id: int) -> InlineKeyboardButton:
+    lang = await get_lang(user_id)
     label = "🌐 English" if lang == "ru" else "🌐 Русский"
     return InlineKeyboardButton(label, callback_data="lang_toggle")
 
 
-def user_keyboard(user_id: int) -> InlineKeyboardMarkup:
+async def user_keyboard(user_id: int) -> InlineKeyboardMarkup:
     rows = _camera_rows()
-    rows.append([_lang_button(user_id)])
+    rows.append([await _lang_button(user_id)])
     return InlineKeyboardMarkup(rows)
 
 
 async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
     if not is_super_admin(user_id):
-        return user_keyboard(user_id)
+        return await user_keyboard(user_id)
 
-    lang = get_lang(user_id)
+    lang = await get_lang(user_id)
     uv   = tuya.get_lamp_status("uv")
     heat = tuya.get_lamp_status("heat")
 
@@ -94,7 +94,7 @@ async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton("🍎 Fed", callback_data="fed")],
             [InlineKeyboardButton("📋 Schedules", callback_data="schedules")],
             [InlineKeyboardButton(admin_label, callback_data="admin")],
-            [_lang_button(user_id)],
+            [await _lang_button(user_id)],
         ]
     else:
         admin_label = f"⚙️ Управление 🔴 {len(requests)}" if requests else "⚙️ Управление"
@@ -111,7 +111,7 @@ async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton("🍎 Покормил", callback_data="fed")],
             [InlineKeyboardButton("📋 Расписания", callback_data="schedules")],
             [InlineKeyboardButton(admin_label, callback_data="admin")],
-            [_lang_button(user_id)],
+            [await _lang_button(user_id)],
         ]
     return InlineKeyboardMarkup(rows)
 

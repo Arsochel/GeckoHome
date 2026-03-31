@@ -1,11 +1,16 @@
-_langs: dict[int, str] = {}
+from database import get_user_lang, set_user_lang
 
 
-def get_lang(user_id: int) -> str:
-    return _langs.get(user_id, "ru")
+async def get_lang(user_id: int) -> str:
+    lang = await get_user_lang(user_id)
+    return lang or "ru"
 
 
-def toggle_lang(user_id: int) -> str:
-    lang = "en" if get_lang(user_id) == "ru" else "ru"
-    _langs[user_id] = lang
+async def set_lang(user_id: int, lang: str):
+    await set_user_lang(user_id, lang)
+
+
+async def toggle_lang(user_id: int) -> str:
+    lang = "en" if await get_lang(user_id) == "ru" else "ru"
+    await set_lang(user_id, lang)
     return lang
