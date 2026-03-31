@@ -5,6 +5,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from services import tuya, camera
 from database import get_schedules, get_access_requests
 from bot.access import is_super_admin
+from bot.i18n import get_lang
 from config import STREAM_BASE_URL
 
 
@@ -54,14 +55,23 @@ def _camera_rows() -> list:
     return rows
 
 
-def user_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(_camera_rows())
+def _lang_button(user_id: int) -> InlineKeyboardButton:
+    lang = get_lang(user_id)
+    label = "🌐 English" if lang == "ru" else "🌐 Русский"
+    return InlineKeyboardButton(label, callback_data="lang_toggle")
+
+
+def user_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    rows = _camera_rows()
+    rows.append([_lang_button(user_id)])
+    return InlineKeyboardMarkup(rows)
 
 
 async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
     if not is_super_admin(user_id):
-        return user_keyboard()
+        return user_keyboard(user_id)
 
+    lang = get_lang(user_id)
     uv   = tuya.get_lamp_status("uv")
     heat = tuya.get_lamp_status("heat")
 
@@ -69,22 +79,40 @@ async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
     heat_on = heat.get("switch") is True
 
     requests = await get_access_requests()
-    admin_label = f"⚙️ Управление 🔴 {len(requests)}" if requests else "⚙️ Управление"
-
-    rows = [
-        [InlineKeyboardButton(
-            f"🔦 UV: {'выкл ➜ вкл' if not uv_on else 'вкл ➜ выкл'}",
-            callback_data="uv_on" if not uv_on else "uv_off",
-        )],
-        [InlineKeyboardButton(
-            f"🔥 Тепловая: {'выкл ➜ вкл' if not heat_on else 'вкл ➜ выкл'}",
-            callback_data="heat_on" if not heat_on else "heat_off",
-        )],
-        *_camera_rows(),
-        [InlineKeyboardButton("🍎 Покормил", callback_data="fed")],
-        [InlineKeyboardButton("📋 Расписания", callback_data="schedules")],
-        [InlineKeyboardButton(admin_label, callback_data="admin")],
-    ]
+    if lang == "en":
+        admin_label = f"⚙️ Settings 🔴 {len(requests)}" if requests else "⚙️ Settings"
+        rows = [
+            [InlineKeyboardButton(
+                f"🔦 UV: {'off ➜ on' if not uv_on else 'on ➜ off'}",
+                callback_data="uv_on" if not uv_on else "uv_off",
+            )],
+            [InlineKeyboardButton(
+                f"🔥 Heat: {'off ➜ on' if not heat_on else 'on ➜ off'}",
+                callback_data="heat_on" if not heat_on else "heat_off",
+            )],
+            *_camera_rows(),
+            [InlineKeyboardButton("🍎 Fed", callback_data="fed")],
+            [InlineKeyboardButton("📋 Schedules", callback_data="schedules")],
+            [InlineKeyboardButton(admin_label, callback_data="admin")],
+            [_lang_button(user_id)],
+        ]
+    else:
+        admin_label = f"⚙️ Управление 🔴 {len(requests)}" if requests else "⚙️ Управление"
+        rows = [
+            [InlineKeyboardButton(
+                f"🔦 UV: {'выкл ➜ вкл' if not uv_on else 'вкл ➜ выкл'}",
+                callback_data="uv_on" if not uv_on else "uv_off",
+            )],
+            [InlineKeyboardButton(
+                f"🔥 Тепловая: {'выкл ➜ вкл' if not heat_on else 'вкл ➜ выкл'}",
+                callback_data="heat_on" if not heat_on else "heat_off",
+            )],
+            *_camera_rows(),
+            [InlineKeyboardButton("🍎 Покормил", callback_data="fed")],
+            [InlineKeyboardButton("📋 Расписания", callback_data="schedules")],
+            [InlineKeyboardButton(admin_label, callback_data="admin")],
+            [_lang_button(user_id)],
+        ]
     return InlineKeyboardMarkup(rows)
 
 
