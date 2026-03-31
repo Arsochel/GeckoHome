@@ -148,6 +148,12 @@ def _get_yolo():
     return _yolo_model
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    from fastapi.responses import FileResponse
+    return FileResponse("static/favicon.ico", media_type="image/x-icon")
+
+
 @app.get("/stream", response_class=HTMLResponse)
 async def stream_page(request: Request):
     return _templates.TemplateResponse("stream.html", {"request": request})

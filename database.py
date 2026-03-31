@@ -119,26 +119,22 @@ async def init_db():
         except Exception:
             pass
         try:
+            await db.execute("ALTER TABLE allowed_users ADD COLUMN lang TEXT")
+            # существующие пользователи получают ru
+            await db.execute("UPDATE allowed_users SET lang = 'ru' WHERE lang IS NULL")
+            # @noemibenini получает en
+            await db.execute("UPDATE allowed_users SET lang = 'en' WHERE user_id = 5157476563")
+        except Exception:
+            pass
+        # migrate from user_lang if it exists
+        try:
             await db.execute("""
-                CREATE TABLE IF NOT EXISTS user_lang (
-                    user_id INTEGER PRIMARY KEY,
-                    lang    TEXT NOT NULL DEFAULT 'ru'
+                UPDATE allowed_users SET lang = (
+                    SELECT lang FROM user_lang WHERE user_lang.user_id = allowed_users.user_id
+                ) WHERE EXISTS (
+                    SELECT 1 FROM user_lang WHERE user_lang.user_id = allowed_users.user_id
                 )
             """)
-            # Populate existing allowed users with 'ru' by default
-            await db.execute("""
-                INSERT OR IGNORE INTO user_lang (user_id, lang)
-                SELECT user_id, 'ru' FROM allowed_users
-            """)
-            # Super admins default ru
-            for sa_id in (472863526, 1244886451, 454935896):
-                await db.execute(
-                    "INSERT OR IGNORE INTO user_lang (user_id, lang) VALUES (?, 'ru')", (sa_id,)
-                )
-            # @noemibenini gets English
-            await db.execute(
-                "INSERT OR REPLACE INTO user_lang (user_id, lang) VALUES (5157476563, 'en')"
-            )
         except Exception:
             pass
         await db.commit()
@@ -401,7 +397,7 @@ async def get_gecko_zone_history(limit: int = 20) -> list[dict]:
 
 async def get_user_lang(user_id: int) -> str | None:
     async with _db() as db:
-        async with db.execute("SELECT lang FROM user_lang WHERE user_id = ?", (user_id,)) as cur:
+        async with db.execute("SELECT lang FROM allowed_users WHERE user_id = ?", (user_id,)) as cur:
             row = await cur.fetchone()
             return row["lang"] if row else None
 
@@ -409,7 +405,8 @@ async def get_user_lang(user_id: int) -> str | None:
 async def set_user_lang(user_id: int, lang: str):
     async with _db(write=True) as db:
         await db.execute(
-            "INSERT OR REPLACE INTO user_lang (user_id, lang) VALUES (?, ?)",
+            "INSERT INTO allowed_users (user_id, lang) VALUES (?, ?)"
+            " ON CONFLICT(user_id) DO UPDATE SET lang = excluded.lang",
             (user_id, lang),
         )
 
