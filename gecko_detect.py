@@ -128,7 +128,8 @@ while True:
     results = model(frame, verbose=False, conf=0.7)[0]
 
     gecko_zone = None
-    for box in results.boxes:
+    if results.boxes:
+        box = max(results.boxes, key=lambda b: float(b.conf[0]))
         x1, y1, x2, y2 = map(int, box.xyxy[0])
         conf = float(box.conf[0])
         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2

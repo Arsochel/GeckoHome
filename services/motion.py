@@ -305,7 +305,7 @@ class MotionMonitor:
                             zoomed = cv2.resize(zoomed, (ZONE_W, ZONE_H))
                             results = model(zoomed, verbose=False, conf=0.4)[0]
                             if results.boxes:
-                                box = results.boxes[0]
+                                box = max(results.boxes, key=lambda b: float(b.conf[0]))
                                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                                 conf = float(box.conf[0])
                                 cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
