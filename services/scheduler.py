@@ -77,10 +77,6 @@ async def _recover_lamps(schedules: list[dict]):
 
 async def load_schedules():
     saved = await get_schedules()
-    if not saved:
-        default_id = "uv_lamp_midnight"
-        await save_schedule(default_id, "uv", 0, 0, 60)
-        saved = await get_schedules()
 
     await _recover_lamps(saved)
 
