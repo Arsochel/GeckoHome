@@ -45,39 +45,6 @@
     const overlay = document.getElementById('overlay');
     const base = window.location.origin;
 
-    async function connectWebRTC() {
-        const pc = new RTCPeerConnection();
-        return new Promise(async (resolve, reject) => {
-            pc.ontrack = e => {
-                v.srcObject = e.streams[0];
-                overlay.classList.add('hidden');
-                resolve();
-            };
-            pc.addTransceiver('video', { direction: 'recvonly' });
-            pc.addTransceiver('audio', { direction: 'recvonly' });
-            await pc.setLocalDescription();
-            const r = await fetch(base + '/api/stream/whep', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/sdp' },
-                body: pc.localDescription.sdp,
-            });
-            if (!r.ok) { pc.close(); reject(new Error('whep ' + r.status)); return; }
-            await pc.setRemoteDescription({ type: 'answer', sdp: await r.text() });
-            pc.onconnectionstatechange = () => {
-                if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-                    pc.close();
-                    reject(new Error('disconnected'));
-                }
-            };
-            setTimeout(() => {
-                if (pc.connectionState !== 'connected') {
-                    pc.close();
-                    reject(new Error('timeout'));
-                }
-            }, 5000);
-        });
-    }
-
     function connectHLS() {
         return new Promise((resolve, reject) => {
             const src = base + '/hls/stream.m3u8';
@@ -118,7 +85,6 @@
     }
 
     async function connect() {
-        try { await connectWebRTC(); return; } catch(e) {}
         try { await connectHLS(); return; } catch(e) {}
         connectMJPEG();
     }

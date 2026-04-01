@@ -2,9 +2,12 @@ import asyncio
 import json
 import os
 import re
+import time
 import threading
 from datetime import datetime
 from contextlib import asynccontextmanager
+
+import cv2
 
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
@@ -130,7 +133,7 @@ app.include_router(schedules.router)
 
 import httpx as _httpx
 from fastapi import Request, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 os.makedirs(camera.HLS_DIR, exist_ok=True)
@@ -165,9 +168,6 @@ async def stream_detect_page(request: Request):
 
 @app.get("/api/stream/live.mjpeg")
 async def stream_live_mjpeg():
-    import cv2
-    import time
-    from fastapi.responses import StreamingResponse
 
     def _generate():
         while True:
@@ -187,15 +187,13 @@ async def stream_live_mjpeg():
 
 @app.get("/api/stream/detect.mjpeg")
 async def stream_detect_mjpeg():
-    import cv2
-    from fastapi.responses import StreamingResponse
 
     def _generate():
         model = _get_yolo()
         while True:
             frame = motion_monitor.get_latest_frame()
             if frame is None:
-                import time; time.sleep(0.1)
+                time.sleep(0.1)
                 continue
             frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
             if model is not None:
@@ -250,22 +248,6 @@ async def stream_view(request: Request):
         print(f"[Stream] view log error: {e}")
     return {"ok": True}
 
-
-@app.post("/api/stream/whep")
-async def stream_whep_public(request: Request):
-    """Публичный WHEP для страницы стрима (без сессионной авторизации)."""
-    if not camera.mediamtx_ready():
-        raise HTTPException(status_code=503, detail="Stream not available")
-    body = await request.body()
-    url = f"http://127.0.0.1:{camera.MEDIAMTX_PORT}/gecko/whep"
-    async with _httpx.AsyncClient() as client:
-        resp = await client.post(url, content=body,
-                                 headers={"Content-Type": "application/sdp"}, timeout=10)
-    headers = {}
-    if "Location" in resp.headers:
-        headers["Location"] = resp.headers["Location"]
-    return Response(content=resp.content, status_code=resp.status_code,
-                    media_type="application/sdp", headers=headers)
 
 
 @app.websocket("/ws/status")
