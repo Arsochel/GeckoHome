@@ -5,7 +5,7 @@
 ## Stack
 
 - **Backend:** FastAPI + APScheduler
-- **Database:** SQLite (aiosqlite)
+- **Database:** SQLite × 2 — `gecko.db` (основная) + `gecko_media.db` (фото BLOB)
 - **Smart devices:** tinytuya (локальный LAN, без облака)
 - **Motion detection:** OpenCV
 - **Camera:** RTSP → HLS (ffmpeg) + WebRTC (mediamtx)
@@ -23,8 +23,9 @@ GeckoHome/
 ├── services/
 │   ├── tuya.py           # tinytuya local control
 │   ├── camera.py         # RTSP snapshot/clip/HLS/WebRTC
-│   ├── scheduler.py      # APScheduler jobs
-│   ├── motion.py         # OpenCV motion detection
+│   ├── scheduler.py      # APScheduler jobs + daily DB backup
+│   ├── motion.py         # OpenCV motion detection + YOLO
+│   ├── zones.py          # Zone detection logic (skull/water/hammock)
 │   └── highlights.py     # Gecko state machine
 ├── routers/
 │   ├── auth.py           # Login/logout
@@ -33,13 +34,16 @@ GeckoHome/
 │   └── schedules.py      # Schedule CRUD
 ├── bot/
 │   ├── access.py         # Access control
-│   ├── formatters.py     # Message formatting
+│   ├── formatters.py     # Message formatting (RU/EN)
 │   ├── keyboards.py      # Inline keyboards
+│   ├── i18n.py           # Language helpers
 │   └── handlers.py       # Command/button handlers
 ├── templates/
 │   ├── admin.html        # Web panel
 │   └── stream.html       # Telegram WebApp stream player
 ├── static/               # CSS, JS, sounds
+├── backups/              # Auto DB backups (daily, last 7, gitignored)
+├── gecko_detect.py       # Standalone YOLO zone calibration tool
 └── .env                  # Secrets (never commit)
 ```
 
@@ -93,6 +97,10 @@ DEVICE_HUMIDIFIER_VERSION=3.3
 
 # Camera (optional)
 CAMERA_RTSP_URL=rtsp://user:pass@192.168.x.x:554/stream
+MEDIAMTX_BIN=C:\path\to\mediamtx.exe   # optional, enables low-latency WebRTC
+
+# YOLO model (optional, enables gecko detection)
+YOLO_MODEL_PATH=C:\path\to\best.pt
 ```
 
 ### 3. Getting local Tuya keys

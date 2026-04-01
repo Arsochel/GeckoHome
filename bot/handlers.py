@@ -11,12 +11,11 @@ from database import (
     add_allowed_user, remove_allowed_user,
     get_schedules, save_schedule, delete_schedule, set_schedule_paused, log_lamp_event,
     log_feeding, get_feeding_history, get_motion_event, update_motion_status, get_allowed_users,
-    log_user_action,
+    log_user_action, get_user_lang,
 )
 from bot.access import check_access, is_super_admin
 from bot.keyboards import main_keyboard, schedules_keyboard, admin_keyboard, stream_url
 from bot.i18n import get_lang, set_lang, toggle_lang
-from database import get_user_lang
 from config import STREAM_BASE_URL
 from bot.formatters import status_text, user_status_text
 
@@ -502,9 +501,6 @@ async def _handle_fed(query, user_id):
     await _safe_edit(query, text, parse_mode="Markdown", reply_markup=await main_keyboard(user_id))
 
 
-_PUBLISH_USERS = [8563910503]  # тестовый аккаунт; позже заменить на get_allowed_users()
-
-
 async def _handle_motion_pub(query, ctx, event_id: int):
     event = await get_motion_event(event_id)
     if not event or event["status"] != "pending":
@@ -514,7 +510,9 @@ async def _handle_motion_pub(query, ctx, event_id: int):
     await update_motion_status(event_id, "published")
     await _safe_edit(query, f"✅ Опубликовано\n_{event['caption']}_", parse_mode="Markdown")
 
-    for uid in _PUBLISH_USERS:
+    users = await get_allowed_users()
+    for u in users:
+        uid = u["user_id"]
         try:
             await ctx.bot.send_photo(
                 uid,

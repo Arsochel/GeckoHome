@@ -3,6 +3,7 @@
 __pycache__/
 *.pyc
 gecko.db
+gecko_media.db
 snapshot.json
 tinytuya.json
 tuya-raw.json
@@ -10,3 +11,4 @@ devices.json
 *.mp3
 .claude/
 tunnel_url.txt
+backups/

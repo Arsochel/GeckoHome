@@ -11,6 +11,7 @@
   Q — выход
 """
 import os
+import re
 import time
 import sqlite3
 import threading
@@ -83,7 +84,6 @@ def _save_zones_to_file():
     with open(zones_py) as f:
         src = f.read()
 
-    import re
     new_list = "PRESET_ZONES = [\n"
     for z in working_zones:
         pts_str = ", ".join(f"({x}, {y})" for x, y in z["pts"])

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import threading
 from datetime import datetime
 from contextlib import asynccontextmanager
@@ -24,7 +25,6 @@ _TUNNEL_PID_FILE = os.path.join(os.path.dirname(__file__), "tunnel.pid")
 
 def _run_cloudflared():
     import subprocess
-    import re
     import time
 
     port  = os.getenv("SERVER_PORT", "8000")
@@ -40,6 +40,7 @@ def _run_cloudflared():
                 ["cloudflared", "tunnel", "--url", f"http://localhost:{port}"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
             )
+
             with open(_TUNNEL_PID_FILE, "w") as f:
                 f.write(str(proc.pid))
 
@@ -203,8 +204,7 @@ async def stream_view(request: Request):
     try:
         params = dict(urllib.parse.parse_qsl(init_data, strict_parsing=True))
         user_str = params.get("user", "{}")
-        import json as _json
-        user = _json.loads(user_str)
+        user = json.loads(user_str)
         name = " ".join(filter(None, [user.get("first_name"), user.get("last_name")]))
         username = user.get("username", "")
         uid = user.get("id", "?")

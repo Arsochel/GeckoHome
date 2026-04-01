@@ -3,12 +3,22 @@ from datetime import datetime
 
 import aiosqlite
 
-DB_PATH = "gecko.db"
+DB_PATH       = "gecko.db"
+MEDIA_DB_PATH = "gecko_media.db"
 
 
 @asynccontextmanager
 async def _db(write=False):
     async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        yield db
+        if write:
+            await db.commit()
+
+
+@asynccontextmanager
+async def _media_db(write=False):
+    async with aiosqlite.connect(MEDIA_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         yield db
         if write:
@@ -52,12 +62,6 @@ async def init_db():
                 first_name   TEXT,
                 requested_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
-            CREATE TABLE IF NOT EXISTS photos (
-                id       INTEGER PRIMARY KEY AUTOINCREMENT,
-                taken_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                source   TEXT DEFAULT 'web',
-                data     BLOB NOT NULL
-            );
             CREATE TABLE IF NOT EXISTS motion_events (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -77,10 +81,6 @@ async def init_db():
                 await db.execute(f"ALTER TABLE schedules ADD COLUMN {col}")
             except Exception:
                 pass
-        try:
-            await db.execute("ALTER TABLE photos ADD COLUMN caption TEXT")
-        except Exception:
-            pass
         try:
             await db.execute("ALTER TABLE allowed_users ADD COLUMN first_name TEXT")
         except Exception:
@@ -137,6 +137,21 @@ async def init_db():
             """)
         except Exception:
             pass
+        await db.commit()
+    await _init_media_db()
+
+
+async def _init_media_db():
+    async with aiosqlite.connect(MEDIA_DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS photos (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                taken_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                source   TEXT DEFAULT 'web',
+                caption  TEXT,
+                data     BLOB NOT NULL
+            )
+        """)
         await db.commit()
 
 
@@ -268,7 +283,7 @@ async def has_pending_request(user_id: int) -> bool:
 # ── Photos ──
 
 async def save_photo(data: bytes, source: str = "web", caption: str = None) -> int:
-    async with _db(write=True) as db:
+    async with _media_db(write=True) as db:
         cur = await db.execute(
             "INSERT INTO photos (data, source, caption) VALUES (?,?,?)", (data, source, caption)
         )
@@ -276,7 +291,7 @@ async def save_photo(data: bytes, source: str = "web", caption: str = None) -> i
 
 
 async def get_photos(limit: int = 20, offset: int = 0) -> list[dict]:
-    async with _db() as db:
+    async with _media_db() as db:
         async with db.execute(
             "SELECT id, taken_at, source, caption FROM photos ORDER BY taken_at DESC LIMIT ? OFFSET ?",
             (limit, offset),
@@ -285,14 +300,14 @@ async def get_photos(limit: int = 20, offset: int = 0) -> list[dict]:
 
 
 async def get_photo_data(photo_id: int) -> bytes | None:
-    async with _db() as db:
+    async with _media_db() as db:
         async with db.execute("SELECT data FROM photos WHERE id = ?", (photo_id,)) as cur:
             row = await cur.fetchone()
             return bytes(row["data"]) if row else None
 
 
 async def delete_photo(photo_id: int):
-    async with _db(write=True) as db:
+    async with _media_db(write=True) as db:
         await db.execute("DELETE FROM photos WHERE id = ?", (photo_id,))
 
 
