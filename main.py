@@ -175,7 +175,7 @@ async def stream_live_mjpeg():
             if frame is None:
                 time.sleep(0.1)
                 continue
-            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+            frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
             _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
             yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
 
@@ -195,7 +195,7 @@ async def stream_detect_mjpeg():
             if frame is None:
                 time.sleep(0.1)
                 continue
-            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+            frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
             if model is not None:
                 results = model(frame, verbose=False, conf=0.6)[0]
                 for box in results.boxes:
