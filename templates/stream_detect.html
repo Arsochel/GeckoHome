@@ -39,6 +39,14 @@
         overlay.textContent = 'Ошибка потока';
         setTimeout(() => { feed.src = feed.src; }, 3000);
     };
+
+    if (window.Telegram?.WebApp?.initData) {
+        fetch(window.location.origin + '/api/stream/view', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({initData: window.Telegram.WebApp.initData}),
+        }).catch(() => {});
+    }
     </script>
 </body>
 </html>
