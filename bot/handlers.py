@@ -230,14 +230,8 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         lamp = ctx.user_data.get("sched_lamp", "uv")
         try:
             parts = text.split()
-            def _parse_time(s):
-                if ":" in s:
-                    h, m = map(int, s.split(":"))
-                else:
-                    h, m = int(s[:2]), int(s[2:])
-                return h, m
-            sh, sm = _parse_time(parts[0])
-            eh, em = _parse_time(parts[1])
+            sh, sm = map(int, parts[0].split(":"))
+            eh, em = map(int, parts[1].split(":"))
             assert 0 <= sh <= 23 and 0 <= sm <= 59
             assert 0 <= eh <= 23 and 0 <= em <= 59
             duration_h = ((eh * 60 + em) - (sh * 60 + sm)) / 60
