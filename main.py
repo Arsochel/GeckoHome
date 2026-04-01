@@ -163,6 +163,28 @@ async def stream_detect_page(request: Request):
     return _templates.TemplateResponse("stream_detect.html", {"request": request})
 
 
+@app.get("/api/stream/live.mjpeg")
+async def stream_live_mjpeg():
+    import cv2
+    import time
+    from fastapi.responses import StreamingResponse
+
+    def _generate():
+        while True:
+            frame = motion_monitor.get_latest_frame()
+            if frame is None:
+                time.sleep(0.1)
+                continue
+            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
+
+    return StreamingResponse(
+        _generate(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
 @app.get("/api/stream/detect.mjpeg")
 async def stream_detect_mjpeg():
     import cv2
