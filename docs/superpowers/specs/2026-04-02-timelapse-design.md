@@ -1,33 +1,33 @@
-# Timelapse Feature Design
+# Таймлапс — дизайн фичи
 
-**Date:** 2026-04-02  
-**Status:** Approved
+**Дата:** 2026-04-02  
+**Статус:** Утверждён
 
-## Overview
+## Суть
 
-Daily timelapse of the gecko terrarium sent to Telegram at 12:00. Frames captured every 2 minutes from the existing motion monitor stream. Three speed variants sent on the first day to pick the best one, then the unused variants are removed.
+Ежедневный таймлапс террариума геккона отправляется в Telegram в 12:00. Кадры снимаются каждые 2 минуты из существующего motion monitor потока. В первый день отправляются три варианта скорости на выбор, лишние потом удаляются.
 
-## Frame Capture
+## Сбор кадров
 
-- **Job:** `capture_timelapse_frame` — APScheduler interval, every 2 minutes
-- **Source:** `motion_monitor.get_latest_frame()` (no new RTSP connection)
-- **Transform:** `cv2.ROTATE_90_CLOCKWISE` (same as MJPEG stream)
-- **Output:** `timelapse/frames/YYYY-MM-DD/HHMMss.jpg`
-- **Skip condition:** frame is None (monitor not running) — silent skip, no error
+- **Джоб:** `capture_timelapse_frame` — APScheduler интервал, каждые 2 минуты
+- **Источник:** `motion_monitor.get_latest_frame()` (новое RTSP соединение не открывается)
+- **Трансформация:** `cv2.ROTATE_90_CLOCKWISE` (как в MJPEG стриме)
+- **Сохранение:** `timelapse/frames/YYYY-MM-DD/HHMMss.jpg`
+- **Пропуск:** если кадр None (монитор не запущен) — тихий пропуск, без ошибки
 
-Approximate yield: ~720 frames/day.
+Примерный выход: ~720 кадров/сутки.
 
-## Generation & Delivery
+## Генерация и отправка
 
-- **Job:** `generate_and_send_timelapse` — APScheduler cron, daily at 12:00
-- **Source:** frames from **yesterday's** folder (`date.today() - timedelta(days=1)`)
-- **Skip condition:** fewer than 10 frames (camera was down)
-- **Variants (first day only):** 3 videos at 15fps (~48s), 24fps (~30s), 30fps (~24s)
-- **After variant selection:** single video at chosen fps
-- **Telegram caption format:** `"🎬 Таймлапс 2026-04-01 • 15fps"`
-- **Cleanup:** delete frame folder and temp video files after sending
+- **Джоб:** `generate_and_send_timelapse` — APScheduler cron, каждый день в 12:00
+- **Источник:** кадры из папки **вчерашнего** дня (`date.today() - timedelta(days=1)`)
+- **Пропуск:** меньше 10 кадров (камера не работала)
+- **Варианты (только первый день):** 3 видео — 15fps (~48с), 24fps (~30с), 30fps (~24с)
+- **После выбора скорости:** одно видео с выбранным fps
+- **Подпись в Telegram:** `"🎬 Таймлапс 2026-04-01 • 15fps"`
+- **Очистка:** удалить папку с кадрами и временные видеофайлы после отправки
 
-### ffmpeg command
+### ffmpeg команда
 
 ```
 ffmpeg -y -framerate {fps} -pattern_type glob -i "*.jpg"
@@ -36,12 +36,12 @@ ffmpeg -y -framerate {fps} -pattern_type glob -i "*.jpg"
   output.mp4
 ```
 
-## Recipients
+## Получатели
 
-- **Testing phase:** hardcoded `TIMELAPSE_TEST_RECIPIENTS` in `config.py` — your ID only
-- **After variant selection:** switch to `TELEGRAM_SUPER_ADMINS`
+- **Фаза тестирования:** захардкоженный `TIMELAPSE_TEST_RECIPIENTS` в `config.py` — только твой ID
+- **После выбора скорости:** переключить на `TELEGRAM_SUPER_ADMINS`
 
-## File Structure
+## Структура файлов
 
 ```
 GeckoHome/
@@ -53,20 +53,20 @@ GeckoHome/
             └── ...
 ```
 
-`timelapse/` added to `.gitignore`.
+`timelapse/` добавить в `.gitignore`.
 
-## New Files / Changes
+## Изменения в коде
 
-| File | Change |
+| Файл | Изменение |
 |---|---|
-| `services/timelapse.py` | New — capture + generate logic |
-| `services/scheduler.py` | Add 2 new jobs: `capture_timelapse_frame`, `generate_and_send_timelapse` |
-| `config.py` | Add `TIMELAPSE_TEST_RECIPIENTS: list[int]` |
-| `.gitignore` | Add `timelapse/` |
+| `services/timelapse.py` | Новый — логика сбора кадров и генерации |
+| `services/scheduler.py` | Добавить 2 джоба: `capture_timelapse_frame`, `generate_and_send_timelapse` |
+| `config.py` | Добавить `TIMELAPSE_TEST_RECIPIENTS: list[int]` |
+| `.gitignore` | Добавить `timelapse/` |
 
-## Speed Variant Workflow
+## Workflow выбора скорости
 
-1. First run sends all 3 variants (15/24/30fps)
-2. User picks one
-3. Remove the multi-variant logic, hardcode chosen fps
-4. Switch recipients from test ID to `TELEGRAM_SUPER_ADMINS`
+1. Первый запуск отправляет все 3 варианта (15/24/30fps)
+2. Выбираем один
+3. Убираем мультивариантную логику, хардкодим выбранный fps
+4. Переключаем получателей с тестового ID на `TELEGRAM_SUPER_ADMINS`
