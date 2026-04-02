@@ -163,11 +163,11 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # Camera — all allowed users
     if data == "cam_snap":
-        return await _handle_snapshot(query, user_id)
+        return await _handle_snapshot(query, user_id, ctx)
     if data == "cam_clip":
-        return await _handle_clip(query, user_id, 30)
+        return await _handle_clip(query, user_id, 30, ctx)
     if data == "cam_clip3":
-        return await _handle_clip(query, user_id, 180)
+        return await _handle_clip(query, user_id, 180, ctx)
 
     # Schedules — super admin only
     if data == "schedules":
@@ -348,6 +348,17 @@ async def _handle_lamp(query, user_id, lamp, on):
         pass
 
 
+async def _replace_main(query, ctx, user_id, text, kb):
+    """Удаляет текущее главное сообщение и шлёт новое — чтобы оно было последним."""
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    msg = await query.message.chat.send_message(text, parse_mode="Markdown", reply_markup=kb)
+    if ctx is not None:
+        ctx.user_data["status_msg_id"] = msg.message_id
+
+
 async def _safe_edit(query, text, **kwargs):
     try:
         await query.edit_message_text(text, **kwargs)
@@ -355,7 +366,7 @@ async def _safe_edit(query, text, **kwargs):
         await query.message.reply_text(text, **kwargs)
 
 
-async def _handle_snapshot(query, user_id):
+async def _handle_snapshot(query, user_id, ctx):
     if not camera.is_configured():
         await _safe_edit(query, "❌ Камера не настроена.")
         return
@@ -374,12 +385,12 @@ async def _handle_snapshot(query, user_id):
                 f,
                 caption=f"🦎 Gecko Cam • {datetime.now().strftime('%H:%M:%S')}",
             )
-        await _safe_edit(query, text, parse_mode="Markdown", reply_markup=kb)
+        await _replace_main(query, ctx, user_id, text, kb)
     else:
         await _safe_edit(query, text + f"\n\n{err_msg}", parse_mode="Markdown", reply_markup=kb)
 
 
-async def _handle_clip(query, user_id, duration: int = 30):
+async def _handle_clip(query, user_id, duration: int = 30, ctx=None):
     if not camera.is_configured():
         await _safe_edit(query, "❌ Камера не настроена.")
         return
@@ -402,7 +413,7 @@ async def _handle_clip(query, user_id, duration: int = 30):
                 write_timeout=max(60, duration * 3),
                 read_timeout=max(60, duration * 3),
             )
-        await _safe_edit(query, text, parse_mode="Markdown", reply_markup=kb)
+        await _replace_main(query, ctx, user_id, text, kb)
     else:
         await _safe_edit(query, text + f"\n\n{err_msg}", parse_mode="Markdown", reply_markup=kb)
 
