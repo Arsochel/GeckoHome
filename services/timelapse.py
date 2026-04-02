@@ -76,11 +76,14 @@ async def _send_video(path: str, caption: str, recipients: set[int]):
         for uid in recipients:
             try:
                 with open(path, "rb") as f:
-                    await client.post(
+                    resp = await client.post(
                         f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo",
                         data={"chat_id": str(uid), "caption": caption},
                         files={"video": ("timelapse.mp4", f, "video/mp4")},
                     )
+                data = resp.json()
+                if not data.get("ok"):
+                    print(f"[Timelapse] sendVideo failed for {uid}: {data.get('description')}")
             except Exception as e:
                 print(f"[Timelapse] send error to {uid}: {e}")
 
