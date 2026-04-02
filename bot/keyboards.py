@@ -34,7 +34,7 @@ def stream_url() -> str | None:
 
 
 
-def _camera_rows(lang: str = "ru") -> list:
+def _camera_rows(lang: str = "ru", super_admin: bool = False) -> list:
     if not camera.is_configured():
         return []
     if lang == "en":
@@ -50,9 +50,10 @@ def _camera_rows(lang: str = "ru") -> list:
         url = stream_url()
         if url:
             rows.append([InlineKeyboardButton("📡 Stream", web_app=WebAppInfo(url=url))])
-        det_url = detect_stream_url()
-        if det_url:
-            rows.append([InlineKeyboardButton("🔍 Stream+detect", web_app=WebAppInfo(url=det_url))])
+        if super_admin:
+            det_url = detect_stream_url()
+            if det_url:
+                rows.append([InlineKeyboardButton("🔍 Stream+detect", web_app=WebAppInfo(url=det_url))])
     else:
         rows = [
             [
@@ -66,9 +67,10 @@ def _camera_rows(lang: str = "ru") -> list:
         url = stream_url()
         if url:
             rows.append([InlineKeyboardButton("📡 Стрим", web_app=WebAppInfo(url=url))])
-        det_url = detect_stream_url()
-        if det_url:
-            rows.append([InlineKeyboardButton("🔍 Стрим+детект", web_app=WebAppInfo(url=det_url))])
+        if super_admin:
+            det_url = detect_stream_url()
+            if det_url:
+                rows.append([InlineKeyboardButton("🔍 Стрим+детект", web_app=WebAppInfo(url=det_url))])
     return rows
 
 
@@ -80,7 +82,7 @@ async def _lang_button(user_id: int) -> InlineKeyboardButton:
 
 async def user_keyboard(user_id: int) -> InlineKeyboardMarkup:
     lang = await get_lang(user_id)
-    rows = _camera_rows(lang)
+    rows = _camera_rows(lang, super_admin=False)
     rows.append([await _lang_button(user_id)])
     return InlineKeyboardMarkup(rows)
 
@@ -108,7 +110,7 @@ async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
                 f"🔥 Heat: {'off ➜ on' if not heat_on else 'on ➜ off'}",
                 callback_data="heat_on" if not heat_on else "heat_off",
             )],
-            *_camera_rows(lang),
+            *_camera_rows(lang, super_admin=True),
             [InlineKeyboardButton("🍎 Fed", callback_data="fed")],
             [InlineKeyboardButton("📋 Schedules", callback_data="schedules")],
             [InlineKeyboardButton(admin_label, callback_data="admin")],
@@ -125,7 +127,7 @@ async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
                 f"🔥 Тепловая: {'выкл ➜ вкл' if not heat_on else 'вкл ➜ выкл'}",
                 callback_data="heat_on" if not heat_on else "heat_off",
             )],
-            *_camera_rows(lang),
+            *_camera_rows(lang, super_admin=True),
             [InlineKeyboardButton("🍎 Покормил", callback_data="fed")],
             [InlineKeyboardButton("📋 Расписания", callback_data="schedules")],
             [InlineKeyboardButton(admin_label, callback_data="admin")],
