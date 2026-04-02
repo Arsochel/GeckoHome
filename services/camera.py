@@ -69,6 +69,10 @@ async def snapshot() -> str | None:
         print(f"[Camera] Snapshot failed:\n{result.stderr.decode()[-500:]}")
     except Exception as e:
         print(f"[Camera] Snapshot error: {e}")
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
     return None
 
 
@@ -94,6 +98,10 @@ async def clip(duration: int = 30) -> str | None:
         print(f"[Camera] Clip failed:\n{result.stderr.decode()[-500:]}")
     except Exception as e:
         print(f"[Camera] Clip error: {e}")
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
     return None
 
 

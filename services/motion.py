@@ -12,45 +12,34 @@ os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 import cv2
 import httpx
 
-from config import CAMERA_RTSP_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS, YOLO_MODEL_PATH
-import shutil
-
-from database import save_photo, add_motion_event, set_gecko_state, log_gecko_zone
+from config import (
+    CAMERA_RTSP_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS, YOLO_MODEL_PATH,
+    MOTION_THRESHOLD, MOTION_MIN_AREA, MOTION_TIMEOUT, MOTION_DEBUG,
+)
+from database import save_photo, add_motion_event, set_gecko_state, log_gecko_zone, update_motion_photo, DB_PATH
 from services.zones import detect_zone, ZONE_W, ZONE_H
 
 _last_motion_time: datetime | None = None
+_motion_lock = threading.Lock()
 
 
 def get_last_motion_time() -> datetime | None:
     return _last_motion_time
 
 
-def _find_dataset_dir() -> str | None:
-    """Find gecko-dataset folder by searching drives with known label."""
-    import string
-    for letter in string.ascii_uppercase:
-        path = f"{letter}:\\gecko-dataset\\images"
-        if os.path.isdir(path):
-            return path
-    return None
-
-
-_DATASET_IMAGES_DIR = _find_dataset_dir()
-
-
-# ── Настройки ──────────────────────────────────────────────────────────────
-MOTION_THRESHOLD = 25      # порог разницы пикселей (0–255)
-MOTION_MIN_AREA  = 1342    # мин. площадь контура чтобы считать движением
-MOTION_DEBUG     = True    # сохранять дебаг-кадр (доступен на /api/motion/debug)
+# ── Настройки (MOTION_THRESHOLD/MIN_AREA/TIMEOUT/DEBUG — из config.py/.env) ──
 _DEBUG_FRAME_PATH = os.path.join(tempfile.gettempdir(), "gecko_motion_debug.jpg")
-MOTION_TIMEOUT    = 45      # секунд без движения → конец сессии
 SNAPSHOT_INTERVAL = 10     # секунд между снапшотами во время движения
 MIN_FRAMES        = 1      # минимум кадров чтобы отправить видео
 YOLO_INTERVAL     = 5      # секунд между запусками YOLO детекции зоны
 # ───────────────────────────────────────────────────────────────────────────
 
 
-_TG = lambda method: f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
+_TG_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}" if TELEGRAM_BOT_TOKEN else ""
+
+
+def _tg_url(method: str) -> str:
+    return f"{_TG_BASE}/{method}"
 
 
 async def _send_photo_with_approval(photo_bytes: bytes, caption: str) -> str | None:
@@ -67,7 +56,7 @@ async def _send_photo_with_approval(photo_bytes: bytes, caption: str) -> str | N
         try:
             async with httpx.AsyncClient(timeout=60) as client:
                 resp = await client.post(
-                    _TG("sendPhoto"),
+                    _tg_url("sendPhoto"),
                     data={"chat_id": admin_id, "caption": caption,
                           "reply_markup": keyboard},
                     files={"photo": ("motion.jpg", photo_bytes, "image/jpeg")},
@@ -75,12 +64,7 @@ async def _send_photo_with_approval(photo_bytes: bytes, caption: str) -> str | N
             data = resp.json()
             if data.get("ok") and file_id is None:
                 file_id = data["result"]["photo"][-1]["file_id"]
-                async with __import__("aiosqlite").connect("gecko.db") as db:
-                    await db.execute(
-                        "UPDATE motion_events SET photo_file_id = ? WHERE id = ?",
-                        (file_id, event_id),
-                    )
-                    await db.commit()
+                await update_motion_photo(event_id, file_id)
                 print(f"[Motion] photo sent, event_id={event_id}")
         except Exception as e:
             print(f"[Motion] photo send error: {e}")
@@ -95,7 +79,7 @@ async def _send_telegram_video(video_path: str, caption: str):
             async with httpx.AsyncClient(timeout=90) as client:
                 with open(video_path, "rb") as f:
                     await client.post(
-                        _TG("sendVideo"),
+                        _tg_url("sendVideo"),
                         data={"chat_id": admin_id, "caption": caption},
                         files={"video": ("motion.mp4", f, "video/mp4")},
                     )
@@ -221,7 +205,7 @@ class MotionMonitor:
                 if frame is None:
                     time.sleep(0.1)
                     continue
-                latest_frame[0] = None  # сбрасываем чтобы не обрабатывать один кадр дважды
+                latest_frame[0] = None
 
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 gray = cv2.GaussianBlur(gray, (21, 21), 0)
@@ -256,7 +240,8 @@ class MotionMonitor:
                     if not motion_active:
                         motion_active = True
                         global _last_motion_time
-                        _last_motion_time = datetime.now()
+                        with _motion_lock:
+                            _last_motion_time = datetime.now()
                         print("\033[92m[Motion] started\033[0m")
                         asyncio.run_coroutine_threadsafe(
                             set_gecko_state("roaming"), self._loop
@@ -265,7 +250,8 @@ class MotionMonitor:
                             self._record_and_send(), self._loop
                         )
                     else:
-                        _last_motion_time = datetime.now()
+                        with _motion_lock:
+                            _last_motion_time = datetime.now()
 
                     if now - last_snap_t >= SNAPSHOT_INTERVAL:
                         fd, path = tempfile.mkstemp(suffix=".jpg", prefix="gecko_motion_")
@@ -348,13 +334,7 @@ class MotionMonitor:
                 mid_bytes = f.read()
             await save_photo(mid_bytes, source="motion", caption=f"{len(snapshot_paths)} frames")
 
-            # Все кадры → в датасет
-            if _DATASET_IMAGES_DIR:
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                for i, p in enumerate(snapshot_paths):
-                    dst = os.path.join(_DATASET_IMAGES_DIR, f"{ts}_{i:02d}.jpg")
-                    shutil.copy2(p, dst)
-                print(f"[Dataset] {len(snapshot_paths)} frames → {_DATASET_IMAGES_DIR}")
+
         except Exception as e:
             print(f"[Motion] process error: {e}")
         finally:

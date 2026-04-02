@@ -27,6 +27,21 @@ YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "")
 
 STREAM_BASE_URL = os.getenv("STREAM_BASE_URL", "http://localhost:8080")
 
+# Motion detection
+MOTION_THRESHOLD = int(os.getenv("MOTION_THRESHOLD", "25"))
+MOTION_MIN_AREA  = int(os.getenv("MOTION_MIN_AREA", "1342"))
+MOTION_TIMEOUT   = int(os.getenv("MOTION_TIMEOUT", "45"))
+MOTION_DEBUG     = os.getenv("MOTION_DEBUG", "true").lower() in ("1", "true", "yes")
+
+# Sensor alerts
+TEMP_ALERT_MIN = float(os.getenv("TEMP_ALERT_MIN", "200"))   # ×10, т.е. 20.0°C
+TEMP_ALERT_MAX = float(os.getenv("TEMP_ALERT_MAX", "350"))   # ×10, т.е. 35.0°C
+HUM_ALERT_MIN  = float(os.getenv("HUM_ALERT_MIN", "30"))
+HUM_ALERT_MAX  = float(os.getenv("HUM_ALERT_MAX", "60"))
+
+# Feeding alert
+FEEDING_ALERT_DAYS = int(os.getenv("FEEDING_ALERT_DAYS", "3"))
+
 # tinytuya local keys (optional, enables local LAN control without cloud)
 DEVICE_LOCAL = {
     "uv_lamp": {

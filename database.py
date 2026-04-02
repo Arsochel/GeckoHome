@@ -334,6 +334,11 @@ async def update_motion_status(event_id: int, status: str):
         await db.execute("UPDATE motion_events SET status = ? WHERE id = ?", (status, event_id))
 
 
+async def update_motion_photo(event_id: int, photo_file_id: str):
+    async with _db(write=True) as db:
+        await db.execute("UPDATE motion_events SET photo_file_id = ? WHERE id = ?", (photo_file_id, event_id))
+
+
 # ── Feedings ──
 
 _last_feeding_time: datetime | None = None
@@ -406,6 +411,26 @@ async def get_gecko_zone_history(limit: int = 20) -> list[dict]:
         async with db.execute(
             "SELECT zone, occurred_at FROM gecko_zone_events ORDER BY occurred_at DESC LIMIT ?",
             (limit,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_sensor_history(hours: int = 24) -> list[dict]:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT recorded_at, temperature, humidity FROM sensor_readings "
+            "WHERE recorded_at >= datetime('now', ? || ' hours') ORDER BY recorded_at",
+            (f"-{hours}",),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_zone_stats(hours: int = 24) -> list[dict]:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT zone, COUNT(*) as count FROM gecko_zone_events "
+            "WHERE occurred_at >= datetime('now', ? || ' hours') GROUP BY zone ORDER BY count DESC",
+            (f"-{hours}",),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 

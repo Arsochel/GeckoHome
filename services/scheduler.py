@@ -6,9 +6,15 @@ from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+import httpx
+
 from services import tuya
 from services.highlights import update_gecko_state
-from database import get_schedules, save_schedule, log_lamp_event, log_sensor_reading
+from database import get_schedules, save_schedule, log_lamp_event, log_sensor_reading, get_last_feeding_cached
+from config import (
+    TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS,
+    TEMP_ALERT_MIN, TEMP_ALERT_MAX, HUM_ALERT_MIN, HUM_ALERT_MAX, FEEDING_ALERT_DAYS,
+)
 
 _DB_PATH     = os.path.join(os.path.dirname(os.path.dirname(__file__)), "gecko.db")
 _BACKUP_DIR  = os.path.join(os.path.dirname(os.path.dirname(__file__)), "backups")
@@ -18,10 +24,10 @@ scheduler = AsyncIOScheduler()
 
 
 async def lamp_schedule(lamp_type: str, duration_h: float):
-    tuya.switch_lamp(lamp_type, True)
+    await asyncio.to_thread(tuya.switch_lamp, lamp_type, True)
     await log_lamp_event(lamp_type, "on", "scheduler")
     await asyncio.sleep(duration_h * 3600)
-    tuya.switch_lamp(lamp_type, False)
+    await asyncio.to_thread(tuya.switch_lamp, lamp_type, False)
     await log_lamp_event(lamp_type, "off", "scheduler")
 
 
@@ -41,10 +47,55 @@ def backup_db():
     print(f"[Backup] saved {dest} ({len(files)} total → kept {_KEEP_BACKUPS})")
 
 
+_last_alert_time: float = 0
+
+
+async def _send_alert(text: str):
+    global _last_alert_time
+    now = datetime.now().timestamp()
+    if now - _last_alert_time < 1800:  # не чаще раза в 30 мин
+        return
+    _last_alert_time = now
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_SUPER_ADMINS:
+        return
+    for admin_id in TELEGRAM_SUPER_ADMINS:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                    json={"chat_id": admin_id, "text": text, "parse_mode": "Markdown"},
+                )
+        except Exception:
+            pass
+
+
 async def record_sensor_readings():
     temp = tuya.get_sensor("thermometer", "va_temperature")
     hum = tuya.get_sensor("humidifier", "va_humidity")
     await log_sensor_reading(temp, hum)
+    # alerts
+    alerts = []
+    if temp is not None:
+        if temp < TEMP_ALERT_MIN:
+            alerts.append(f"🥶 Температура низкая: *{temp/10:.1f}°C*")
+        elif temp > TEMP_ALERT_MAX:
+            alerts.append(f"🔥 Температура высокая: *{temp/10:.1f}°C*")
+    if hum is not None:
+        if hum < HUM_ALERT_MIN:
+            alerts.append(f"🏜 Влажность низкая: *{hum}%*")
+        elif hum > HUM_ALERT_MAX:
+            alerts.append(f"💦 Влажность высокая: *{hum}%*")
+    if alerts:
+        await _send_alert("⚠️ *Gecko Home Alert*\n" + "\n".join(alerts))
+
+
+async def check_feeding_alert():
+    last = get_last_feeding_cached()
+    if last is None:
+        return
+    days = (datetime.now() - last).days
+    if days >= FEEDING_ALERT_DAYS:
+        await _send_alert(f"🍎 Геккон не кормлен *{days}* дней!")
 
 
 def _is_lamp_on_now(hour: int, minute: int, duration_h: float) -> bool:
@@ -79,7 +130,7 @@ async def load_schedules():
     saved = await get_schedules()
     if not saved:
         default_id = "uv_lamp_midnight"
-        await save_schedule(default_id, "uv", 0, 0, 60)
+        await save_schedule(default_id, "uv", 8, 0, 12)
         saved = await get_schedules()
 
     await _recover_lamps(saved)
@@ -97,6 +148,7 @@ async def load_schedules():
     scheduler.add_job(record_sensor_readings, "interval", minutes=30, id="sensor_readings")
     scheduler.add_job(update_gecko_state, "interval", minutes=2, id="gecko_state")
     scheduler.add_job(backup_db, "cron", hour=3, minute=0, id="db_backup")
+    scheduler.add_job(check_feeding_alert, "cron", hour=12, minute=0, id="feeding_alert")
 
 
 def start():

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 
 from services import tuya
@@ -99,8 +100,8 @@ def _feeding_line(lang: str) -> str:
 
 
 async def user_status_text(lang: str = "ru") -> str:
-    temp = tuya.get_sensor("thermometer", "va_temperature")
-    hum  = tuya.get_sensor("humidifier",  "va_humidity")
+    temp = await asyncio.to_thread(tuya.get_sensor, "thermometer", "va_temperature")
+    hum  = await asyncio.to_thread(tuya.get_sensor, "humidifier",  "va_humidity")
     now  = datetime.now().strftime("%H:%M:%S")
 
     temp_str = f"{temp / 10:.1f}°C" if temp is not None else "—"
@@ -136,10 +137,12 @@ async def user_status_text(lang: str = "ru") -> str:
 
 
 async def status_text(lang: str = "ru") -> str:
-    uv   = tuya.get_lamp_status("uv")
-    heat = tuya.get_lamp_status("heat")
-    temp = tuya.get_sensor("thermometer", "va_temperature")
-    hum  = tuya.get_sensor("humidifier",  "va_humidity")
+    uv, heat, temp, hum = await asyncio.gather(
+        asyncio.to_thread(tuya.get_lamp_status, "uv"),
+        asyncio.to_thread(tuya.get_lamp_status, "heat"),
+        asyncio.to_thread(tuya.get_sensor, "thermometer", "va_temperature"),
+        asyncio.to_thread(tuya.get_sensor, "humidifier", "va_humidity"),
+    )
     now  = datetime.now().strftime("%H:%M:%S")
 
     temp_str = f"{temp / 10:.1f}°C" if temp is not None else "—"

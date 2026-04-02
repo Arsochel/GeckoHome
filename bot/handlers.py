@@ -1,4 +1,7 @@
 import asyncio
+import io
+import os
+import tempfile
 from datetime import datetime
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
@@ -11,7 +14,7 @@ from database import (
     add_allowed_user, remove_allowed_user,
     get_schedules, save_schedule, delete_schedule, set_schedule_paused, log_lamp_event,
     log_feeding, get_feeding_history, get_motion_event, update_motion_status, get_allowed_users,
-    log_user_action, get_user_lang,
+    log_user_action, get_user_lang, get_sensor_history, get_zone_stats,
 )
 from bot.access import check_access, is_super_admin
 from bot.keyboards import main_keyboard, schedules_keyboard, admin_keyboard, stream_url
@@ -254,6 +257,9 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             duration_h = ((eh * 60 + em) - (sh * 60 + sm)) / 60
             if duration_h <= 0:
                 duration_h += 24  # crosses midnight
+            if duration_h > 16:
+                await update.message.reply_text("❌ Максимум 16 часов.")
+                return
         except (ValueError, IndexError, AssertionError):
             await update.message.reply_text("❌ Неверный формат. Пример: `08:00 20:00`", parse_mode="Markdown")
             return
@@ -380,11 +386,14 @@ async def _handle_snapshot(query, user_id, ctx):
     kb = await main_keyboard(user_id)
     err_msg = "❌ Failed to take snapshot" if lang == "en" else "❌ Не удалось сделать снимок"
     if path:
-        with open(path, "rb") as f:
-            await query.message.reply_photo(
-                f,
-                caption=f"🦎 Gecko Cam • {datetime.now().strftime('%H:%M:%S')}",
-            )
+        try:
+            with open(path, "rb") as f:
+                await query.message.reply_photo(
+                    f,
+                    caption=f"🦎 Gecko Cam • {datetime.now().strftime('%H:%M:%S')}",
+                )
+        finally:
+            os.unlink(path)
         await _replace_main(query, ctx, user_id, text, kb)
     else:
         await _safe_edit(query, text + f"\n\n{err_msg}", parse_mode="Markdown", reply_markup=kb)
@@ -405,14 +414,17 @@ async def _handle_clip(query, user_id, duration: int = 30, ctx=None):
     kb = await main_keyboard(user_id)
     err_msg = "❌ Failed to record clip" if lang == "en" else "❌ Не удалось записать клип"
     if path:
-        with open(path, "rb") as f:
-            await query.message.reply_video(
-                f,
-                caption=f"🦎 Gecko Cam • {datetime.now().strftime('%H:%M:%S')}",
-                width=720, height=1280,
-                write_timeout=max(60, duration * 3),
-                read_timeout=max(60, duration * 3),
-            )
+        try:
+            with open(path, "rb") as f:
+                await query.message.reply_video(
+                    f,
+                    caption=f"🦎 Gecko Cam • {datetime.now().strftime('%H:%M:%S')}",
+                    width=720, height=1280,
+                    write_timeout=max(60, duration * 3),
+                    read_timeout=max(60, duration * 3),
+                )
+        finally:
+            os.unlink(path)
         await _replace_main(query, ctx, user_id, text, kb)
     else:
         await _safe_edit(query, text + f"\n\n{err_msg}", parse_mode="Markdown", reply_markup=kb)
@@ -541,6 +553,8 @@ async def _handle_motion_pub(query, ctx, event_id: int):
     users = await get_allowed_users()
     for u in users:
         uid = u["user_id"]
+        if is_super_admin(uid):
+            continue  # super admins already saw it via approval
         try:
             await ctx.bot.send_photo(
                 uid,

@@ -2,7 +2,6 @@ import asyncio
 import json
 import os
 import re
-import time
 import threading
 from datetime import datetime
 from contextlib import asynccontextmanager
@@ -169,15 +168,16 @@ async def stream_detect_page(request: Request):
 @app.get("/api/stream/live.mjpeg")
 async def stream_live_mjpeg():
 
-    def _generate():
+    async def _generate():
         while True:
             frame = motion_monitor.get_latest_frame()
             if frame is None:
-                time.sleep(0.1)
+                await asyncio.sleep(0.1)
                 continue
             frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
             _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
             yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
+            await asyncio.sleep(0.033)
 
     return StreamingResponse(
         _generate(),
@@ -188,16 +188,17 @@ async def stream_live_mjpeg():
 @app.get("/api/stream/detect.mjpeg")
 async def stream_detect_mjpeg():
 
-    def _generate():
+    async def _generate():
         model = _get_yolo()
         while True:
             frame = motion_monitor.get_latest_frame()
             if frame is None:
-                time.sleep(0.1)
+                await asyncio.sleep(0.1)
                 continue
             frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
             if model is not None:
-                results = model(frame, verbose=False, conf=0.6)[0]
+                results = await asyncio.to_thread(model, frame, verbose=False, conf=0.6)
+                results = results[0]
                 for box in results.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     conf = float(box.conf[0])
@@ -206,11 +207,26 @@ async def stream_detect_mjpeg():
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
             _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
             yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
+            await asyncio.sleep(0.033)
 
     return StreamingResponse(
         _generate(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
+
+
+def _verify_telegram_init_data(init_data: str) -> bool:
+    """Verify Telegram WebApp initData HMAC signature."""
+    import hmac, hashlib, urllib.parse
+    params = dict(urllib.parse.parse_qsl(init_data))
+    received_hash = params.pop("hash", "")
+    if not received_hash:
+        return False
+    data_check = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
+    from config import TELEGRAM_BOT_TOKEN
+    secret = hmac.new(b"WebAppData", TELEGRAM_BOT_TOKEN.encode(), hashlib.sha256).digest()
+    computed = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(computed, received_hash)
 
 
 @app.post("/api/stream/view")
@@ -220,6 +236,8 @@ async def stream_view(request: Request):
     body = await request.json()
     init_data = body.get("initData", "")
     if not init_data:
+        return {"ok": False}
+    if not _verify_telegram_init_data(init_data):
         return {"ok": False}
     try:
         params = dict(urllib.parse.parse_qsl(init_data, strict_parsing=True))
@@ -233,7 +251,7 @@ async def stream_view(request: Request):
             async with _httpx.AsyncClient() as c:
                 await c.post(
                     "http://127.0.0.1:8765",
-                    content=f'{{"msg": "{msg}"}}'.encode(),
+                    content=json.dumps({"msg": msg}).encode(),
                     headers={"Content-Type": "application/json"},
                     timeout=1,
                 )
@@ -261,7 +279,7 @@ async def ws_status(websocket: WebSocket):
                 asyncio.to_thread(tuya.get_lamp_status, "heat"),
             )
             await websocket.send_text(json.dumps({"uv": uv, "heat": heat}))
-            await asyncio.sleep(1)
+            await asyncio.sleep(5)
     except Exception:
         pass
     print("[WS] client disconnected")
@@ -269,9 +287,11 @@ async def ws_status(websocket: WebSocket):
 
 @app.get("/hls/{filename}")
 async def serve_hls(filename: str):
-    path = os.path.join(camera.HLS_DIR, filename)
+    path = os.path.realpath(os.path.join(camera.HLS_DIR, filename))
+    hls_dir = os.path.realpath(camera.HLS_DIR)
+    if not path.startswith(hls_dir + os.sep) and path != hls_dir:
+        raise HTTPException(status_code=400, detail="Invalid filename")
     if not os.path.exists(path):
-        from fastapi import HTTPException
         raise HTTPException(status_code=404)
     if filename.endswith(".m3u8"):
         return FileResponse(path, media_type="application/vnd.apple.mpegurl")
@@ -279,7 +299,10 @@ async def serve_hls(filename: str):
 
 
 @app.get("/api/motion/debug")
-async def motion_debug():
+async def motion_debug(request: Request):
+    user = request.session.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     from services.motion import _DEBUG_FRAME_PATH
     if not os.path.exists(_DEBUG_FRAME_PATH):
         raise HTTPException(status_code=404, detail="No debug frame yet")
@@ -288,4 +311,4 @@ async def motion_debug():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("SERVER_PORT", "8000")))

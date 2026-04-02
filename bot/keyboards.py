@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
@@ -92,8 +93,10 @@ async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
         return await user_keyboard(user_id)
 
     lang = await get_lang(user_id)
-    uv   = tuya.get_lamp_status("uv")
-    heat = tuya.get_lamp_status("heat")
+    uv, heat = await asyncio.gather(
+        asyncio.to_thread(tuya.get_lamp_status, "uv"),
+        asyncio.to_thread(tuya.get_lamp_status, "heat"),
+    )
 
     uv_on   = uv.get("switch") is True
     heat_on = heat.get("switch") is True
