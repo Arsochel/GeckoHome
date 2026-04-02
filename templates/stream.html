@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>🦎 Gecko Cam</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
@@ -39,33 +38,6 @@
     const overlay = document.getElementById('overlay');
     const base = window.location.origin;
 
-    function connectHLS() {
-        return new Promise((resolve, reject) => {
-            const src = base + '/hls/stream.m3u8';
-            if (Hls.isSupported()) {
-                const hls = new Hls({ lowLatencyMode: true });
-                hls.loadSource(src);
-                hls.attachMedia(v);
-                hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                    v.play();
-                    overlay.classList.add('hidden');
-                    resolve();
-                });
-                hls.on(Hls.Events.ERROR, (_, data) => {
-                    if (data.fatal) { hls.destroy(); reject(new Error('hls ' + data.details)); }
-                });
-                setTimeout(() => reject(new Error('hls timeout')), 8000);
-            } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
-                v.src = src;
-                v.addEventListener('loadedmetadata', () => { v.play(); overlay.classList.add('hidden'); resolve(); }, { once: true });
-                v.addEventListener('error', () => reject(new Error('hls native error')), { once: true });
-                setTimeout(() => reject(new Error('hls timeout')), 8000);
-            } else {
-                reject(new Error('hls not supported'));
-            }
-        });
-    }
-
     function connectMJPEG() {
         v.style.display = 'none';
         mjpeg.style.display = 'block';
@@ -78,8 +50,7 @@
         };
     }
 
-    async function connect() {
-        try { await connectHLS(); return; } catch(e) {}
+    function connect() {
         connectMJPEG();
     }
 
