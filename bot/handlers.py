@@ -56,7 +56,24 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     lang = existing_lang
     text = await status_text(lang) if is_super_admin(user.id) else await user_status_text(lang)
-    msg = await update.message.reply_text(text, parse_mode="Markdown", reply_markup=await main_keyboard(user.id))
+    kb = await main_keyboard(user.id)
+    # удаляем команду /start из чата
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+    # редактируем старое сообщение если есть
+    prev_id = ctx.user_data.get("status_msg_id")
+    if prev_id:
+        try:
+            await ctx.bot.edit_message_text(
+                text, chat_id=update.effective_chat.id, message_id=prev_id,
+                parse_mode="Markdown", reply_markup=kb,
+            )
+            return
+        except Exception:
+            pass
+    msg = await ctx.bot.send_message(update.effective_chat.id, text, parse_mode="Markdown", reply_markup=kb)
     ctx.user_data["status_msg_id"] = msg.message_id
 
 
