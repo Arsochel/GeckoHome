@@ -10,7 +10,7 @@ import httpx
 
 from services import tuya
 from services.highlights import update_gecko_state
-from database import get_schedules, save_schedule, log_lamp_event, log_sensor_reading, get_last_feeding_cached
+from database import get_schedules, save_schedule, log_lamp_event, log_sensor_reading, get_last_feeding_cached, purge_old_photos
 from config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS,
     TEMP_ALERT_MIN, TEMP_ALERT_MAX, HUM_ALERT_MIN, HUM_ALERT_MAX, FEEDING_ALERT_DAYS,
@@ -149,6 +149,7 @@ async def load_schedules():
     scheduler.add_job(update_gecko_state, "interval", minutes=2, id="gecko_state")
     scheduler.add_job(backup_db, "cron", hour=3, minute=0, id="db_backup")
     scheduler.add_job(check_feeding_alert, "cron", hour=12, minute=0, id="feeding_alert")
+    scheduler.add_job(purge_old_photos, "interval", minutes=30, id="purge_photos")
 
 
 def start():

@@ -311,6 +311,13 @@ async def delete_photo(photo_id: int):
         await db.execute("DELETE FROM photos WHERE id = ?", (photo_id,))
 
 
+async def purge_old_photos():
+    async with _media_db(write=True) as db:
+        cur = await db.execute("DELETE FROM photos WHERE taken_at < datetime('now', '-1 hour')")
+        if cur.rowcount:
+            print(f"[Purge] deleted {cur.rowcount} photos older than 24h")
+
+
 # ── Motion events ──
 
 async def add_motion_event(photo_file_id: str, caption: str) -> int:
