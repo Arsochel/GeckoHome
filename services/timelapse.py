@@ -1,8 +1,10 @@
 import os
-import cv2
-from datetime import datetime
+import pathlib
 import subprocess
 import tempfile
+from datetime import datetime
+
+import cv2
 
 _BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 TIMELAPSE_FRAMES_DIR = os.path.join(_BASE_DIR, "timelapse", "frames")
@@ -35,7 +37,7 @@ def _compile_timelapse(frames_dir: str, fps: int, output_path: str) -> bool:
     try:
         with os.fdopen(fd, "w") as f:
             for name in frames:
-                f.write(f"file '{os.path.join(frames_dir, name)}'\n")
+                f.write(f"file '{pathlib.Path(frames_dir, name).as_posix()}'\n")
         result = subprocess.run(
             [
                 "ffmpeg", "-y",
@@ -44,12 +46,16 @@ def _compile_timelapse(frames_dir: str, fps: int, output_path: str) -> bool:
                 "-i", list_path,
                 "-vf", "scale=720:1280:force_original_aspect_ratio=decrease,"
                        "pad=720:1280:(ow-iw)/2:(oh-ih)/2",
+                "-pix_fmt", "yuv420p",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                 output_path,
             ],
             capture_output=True, timeout=300,
         )
-        return result.returncode == 0
+        if result.returncode != 0:
+            print(f"[Timelapse] ffmpeg error: {result.stderr.decode(errors='replace')[-500:]}")
+            return False
+        return True
     finally:
         try:
             os.unlink(list_path)
