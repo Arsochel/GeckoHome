@@ -38,8 +38,8 @@ ffmpeg -y -framerate {fps} -pattern_type glob -i "*.jpg"
 
 ## Получатели
 
-- **Фаза тестирования:** захардкоженный `TIMELAPSE_TEST_RECIPIENTS` в `config.py` — только твой ID
-- **После выбора скорости:** переключить на `TELEGRAM_SUPER_ADMINS`
+- **Фаза тестирования (выбор скорости):** только `TELEGRAM_SUPER_ADMINS`
+- **После выбора скорости:** рассылка всем из `allowed_users` + супер-админам
 
 ## Структура файлов
 
@@ -61,12 +61,12 @@ GeckoHome/
 |---|---|
 | `services/timelapse.py` | Новый — логика сбора кадров и генерации |
 | `services/scheduler.py` | Добавить 2 джоба: `capture_timelapse_frame`, `generate_and_send_timelapse` |
-| `config.py` | Добавить `TIMELAPSE_TEST_RECIPIENTS: list[int]` |
+| `config.py` | Без изменений — используем существующий `TELEGRAM_SUPER_ADMINS` |
 | `.gitignore` | Добавить `timelapse/` |
 
 ## Workflow выбора скорости
 
-1. Первый запуск отправляет все 3 варианта (15/24/30fps)
+1. Первый запуск отправляет все 3 варианта (15/24/30fps) супер-админам
 2. Выбираем один
 3. Убираем мультивариантную логику, хардкодим выбранный fps
-4. Переключаем получателей с тестового ID на `TELEGRAM_SUPER_ADMINS`
+4. Переключаем получателей на всех пользователей из `allowed_users` + супер-админы
