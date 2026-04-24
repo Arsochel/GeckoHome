@@ -8,7 +8,7 @@ from database import save_schedule, delete_schedule as db_delete_schedule, set_s
 from routers.auth import get_current_user
 
 import logging
-logger = logging.getLogger("gecko")
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/schedules")
 

@@ -2,13 +2,13 @@ import asyncio
 from datetime import datetime
 
 from services import tuya
-from database import get_last_feeding_cached, get_gecko_state, get_gecko_zone
+from database import get_last_feeding_cached, get_gecko_state, get_gecko_zone, get_last_cricket_purchase, get_next_feeding_supplements
 
 _ZONE_LABELS = {
     "ru": {
         "skull":          "на черепе",
         "water":          "у поилки",
-        "hammock":        "на гамаке",
+        "sauna":          "в бане",
         "left of skull":  "слева от черепа",
         "right of skull": "справа от черепа",
         "below skull":    "под черепом",
@@ -17,7 +17,7 @@ _ZONE_LABELS = {
     "en": {
         "skull":          "on the skull",
         "water":          "at the water bowl",
-        "hammock":        "on the hammock",
+        "sauna":          "in the sauna",
         "left of skull":  "left of skull",
         "right of skull": "right of skull",
         "below skull":    "below skull",
@@ -88,6 +88,44 @@ async def _zone_line(lang: str) -> str:
     return f"📍 {key}:            *{label}*{_ago_str(updated, lang)}\n"
 
 
+async def _alert_block(lang: str) -> str:
+    """Алерты о кормлении и сверчках — показываются прямо в статусе."""
+    from config import FEEDING_ALERT_DAYS
+    lines = []
+
+    last = get_last_feeding_cached()
+    if last is not None:
+        days = (datetime.now() - last).days
+        if days >= FEEDING_ALERT_DAYS:
+            supplements = await get_next_feeding_supplements()
+            if lang == "en":
+                line = f"🔴 *Feed gecko!* Not fed for *{days}d*"
+                if "vitamins" in supplements:
+                    line += " · 💊 with vitamins"
+                if "hornworm" in supplements:
+                    line += " · 🐛 hornworm"
+            else:
+                line = f"🔴 *Пора кормить!* Не ел *{days} д.*"
+                if "vitamins" in supplements:
+                    line += " · 💊 с витаминами"
+                if "hornworm" in supplements:
+                    line += " · 🐛 бражник"
+            lines.append(line)
+
+    bought_at, _ = await get_last_cricket_purchase()
+    if bought_at is not None:
+        days_since = (datetime.now() - bought_at).days
+        if days_since >= 5:
+            if lang == "en":
+                lines.append("🦗 *Crickets running out* — buy a new batch soon")
+            else:
+                lines.append("🦗 *Сверчки заканчиваются* — скоро покупать")
+
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n\n"
+
+
 def _feeding_line(lang: str) -> str:
     dt = get_last_feeding_cached()
     if lang == "en":
@@ -101,7 +139,7 @@ def _feeding_line(lang: str) -> str:
 
 async def user_status_text(lang: str = "ru") -> str:
     temp = await asyncio.to_thread(tuya.get_sensor, "thermometer", "va_temperature")
-    hum  = await asyncio.to_thread(tuya.get_sensor, "humidifier",  "va_humidity")
+    hum  = await asyncio.to_thread(tuya.get_sensor, "humidifier", "va_humidity") or await asyncio.to_thread(tuya.get_sensor, "thermometer", "va_humidity")
     now  = datetime.now().strftime("%H:%M:%S")
 
     temp_str = f"{temp / 10:.1f}°C" if temp is not None else "—"
@@ -119,7 +157,9 @@ async def user_status_text(lang: str = "ru") -> str:
             f"\n"
             f"{_feeding_line(lang)}\n"
             f"\n"
-            f"🕐 _{now}_"
+            f"🕐 _{now}_\n"
+            f"\n"
+            f"_If something doesn't work — press /start in the menu_"
         )
     return (
         f"🦎 *Gecko Home*\n"
@@ -132,7 +172,9 @@ async def user_status_text(lang: str = "ru") -> str:
         f"\n"
         f"{_feeding_line(lang)}\n"
         f"\n"
-        f"🕐 _{now}_"
+        f"🕐 _{now}_\n"
+        f"\n"
+        f"_Если что-то не работает — нажмите /start в меню_"
     )
 
 
@@ -141,7 +183,7 @@ async def status_text(lang: str = "ru") -> str:
         asyncio.to_thread(tuya.get_lamp_status, "uv"),
         asyncio.to_thread(tuya.get_lamp_status, "heat"),
         asyncio.to_thread(tuya.get_sensor, "thermometer", "va_temperature"),
-        asyncio.to_thread(tuya.get_sensor, "humidifier", "va_humidity"),
+        asyncio.to_thread(tuya.get_sensor, "humidifier", "va_humidity") if tuya.DEVICE_IDS.get("humidifier") else asyncio.to_thread(tuya.get_sensor, "thermometer", "va_humidity"),
     )
     now  = datetime.now().strftime("%H:%M:%S")
 
@@ -163,7 +205,9 @@ async def status_text(lang: str = "ru") -> str:
             f"\n"
             f"{_feeding_line(lang)}\n"
             f"\n"
-            f"🕐 _{now}_"
+            f"🕐 _{now}_\n"
+            f"\n"
+            f"_If something doesn't work — press /start in the menu_"
         )
     return (
         f"🦎 *Gecko Home*\n"
@@ -179,5 +223,7 @@ async def status_text(lang: str = "ru") -> str:
         f"\n"
         f"{_feeding_line(lang)}\n"
         f"\n"
-        f"🕐 _{now}_"
+        f"🕐 _{now}_\n"
+        f"\n"
+        f"_Если что-то не работает — нажмите /start в меню_"
     )

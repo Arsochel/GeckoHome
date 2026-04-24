@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import Response
@@ -7,6 +8,8 @@ from services import tuya, camera
 from database import log_lamp_event, save_photo, get_photos, get_photo_data, delete_photo
 from routers.auth import get_current_user
 
+log = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api")
 
 _auth = Depends(get_current_user)
@@ -14,22 +17,24 @@ _auth = Depends(get_current_user)
 
 @router.get("/status")
 async def get_status(_=_auth):
+    temp = tuya.get_sensor("thermometer", "va_temperature")
+    hum  = tuya.get_sensor("humidifier",  "va_humidity") or tuya.get_sensor("thermometer", "va_humidity")
     return {
-        "uv":   tuya.get_lamp_status("uv"),
-        "heat": tuya.get_lamp_status("heat"),
-        "temperature": tuya.get_sensor("thermometer", "va_temperature"),
-        "humidity":    tuya.get_sensor("humidifier",  "va_humidity"),
+        "uv":          tuya.get_lamp_status("uv"),
+        "heat":        tuya.get_lamp_status("heat"),
+        "temperature": round(temp / 10, 1) if temp is not None else None,
+        "humidity":    hum,
     }
 
 
 @router.post("/lamp/{lamp_type}/{action}")
 async def control_lamp(lamp_type: str, action: str, _=_auth):
-    print(f"[lamp] type={lamp_type!r} action={action!r}")
+    log.info("lamp control: type=%r action=%r", lamp_type, action)
     if lamp_type not in ("uv", "heat") or action not in ("on", "off"):
         raise HTTPException(status_code=400, detail="Invalid request")
     on = action == "on"
     result = await asyncio.to_thread(tuya.switch_lamp, lamp_type, on)
-    print(f"[lamp] switch_lamp result: {result}")
+    log.debug("switch_lamp result: %s", result)
     if not result:
         raise HTTPException(status_code=400, detail="Failed to control lamp")
     await log_lamp_event(lamp_type, action, "web")
@@ -86,6 +91,20 @@ async def gallery_photo(photo_id: int, _=_auth):
 async def gallery_delete(photo_id: int, _=_auth):
     await delete_photo(photo_id)
     return {"ok": True}
+
+
+@router.get("/sensor-history")
+async def sensor_history(hours: int = 24, _=_auth):
+    from database import get_sensor_history
+    rows = await get_sensor_history(hours=hours)
+    return [
+        {
+            "t": r["recorded_at"],
+            "temp": round(r["temperature"] / 10, 1) if r["temperature"] is not None else None,
+            "hum":  r["humidity"],
+        }
+        for r in rows
+    ]
 
 
 

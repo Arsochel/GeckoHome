@@ -1,7 +1,10 @@
+import logging
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import aiosqlite
+
+log = logging.getLogger(__name__)
 
 DB_PATH       = "gecko.db"
 MEDIA_DB_PATH = "gecko_media.db"
@@ -46,7 +49,7 @@ async def init_db():
             );
             CREATE TABLE IF NOT EXISTS lamp_events (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                occurred_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                occurred_at DATETIME NOT NULL,
                 lamp_type   TEXT NOT NULL,
                 action      TEXT NOT NULL,
                 source      TEXT NOT NULL
@@ -71,9 +74,28 @@ async def init_db():
             );
             CREATE TABLE IF NOT EXISTS feedings (
                 id     INTEGER PRIMARY KEY AUTOINCREMENT,
-                fed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                fed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                notes  TEXT
+            );
+            CREATE TABLE IF NOT EXISTS gecko_state (
+                id         INTEGER PRIMARY KEY CHECK (id = 1),
+                state      TEXT NOT NULL,
+                updated_at DATETIME NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS cricket_batches (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                bought_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                count     INTEGER DEFAULT 60
+            );
+            CREATE TABLE IF NOT EXISTS alert_messages (
+                user_id    INTEGER NOT NULL,
+                alert_type TEXT NOT NULL,
+                message_id INTEGER NOT NULL,
+                PRIMARY KEY (user_id, alert_type)
             );
         """)
+
+        # schedules migrations
         for col in ("end_hour INTEGER NOT NULL DEFAULT 0",
                     "end_minute INTEGER NOT NULL DEFAULT 0",
                     "duration_h REAL NOT NULL DEFAULT 0"):
@@ -81,52 +103,20 @@ async def init_db():
                 await db.execute(f"ALTER TABLE schedules ADD COLUMN {col}")
             except Exception:
                 pass
+
+        # allowed_users migrations
+        for col in ("first_name TEXT", "lang TEXT", "blocked_bot INTEGER DEFAULT 0", "blocked_at DATETIME", "revoked INTEGER DEFAULT 0"):
+            try:
+                await db.execute(f"ALTER TABLE allowed_users ADD COLUMN {col}")
+            except Exception:
+                pass
         try:
-            await db.execute("ALTER TABLE allowed_users ADD COLUMN first_name TEXT")
-        except Exception:
-            pass
-        try:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS gecko_state (
-                    id         INTEGER PRIMARY KEY CHECK (id = 1),
-                    state      TEXT NOT NULL,
-                    updated_at DATETIME NOT NULL
-                )
-            """)
-        except Exception:
-            pass
-        try:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS user_actions (
-                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                    occurred_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    user_id    INTEGER NOT NULL,
-                    username   TEXT,
-                    action     TEXT NOT NULL
-                )
-            """)
-        except Exception:
-            pass
-        try:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS gecko_zone_events (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    occurred_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    zone        TEXT NOT NULL,
-                    confidence  REAL
-                )
-            """)
-        except Exception:
-            pass
-        try:
-            await db.execute("ALTER TABLE allowed_users ADD COLUMN lang TEXT")
-            # существующие пользователи получают ru
             await db.execute("UPDATE allowed_users SET lang = 'ru' WHERE lang IS NULL")
-            # @noemibenini получает en
             await db.execute("UPDATE allowed_users SET lang = 'en' WHERE user_id = 5157476563")
         except Exception:
             pass
-        # migrate from user_lang if it exists
+
+        # migrate user_lang table if exists
         try:
             await db.execute("""
                 UPDATE allowed_users SET lang = (
@@ -137,6 +127,107 @@ async def init_db():
             """)
         except Exception:
             pass
+
+        # migrate user_actions → one row per user (user_id, snapshots, clips_30, clips_3min, streams)
+        try:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS user_actions_new (
+                    user_id   INTEGER PRIMARY KEY,
+                    snapshots INTEGER NOT NULL DEFAULT 0,
+                    clips_30  INTEGER NOT NULL DEFAULT 0,
+                    clips_3min INTEGER NOT NULL DEFAULT 0,
+                    streams   INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+            async with db.execute("PRAGMA table_info(user_actions)") as cur:
+                cols = [r[1] for r in await cur.fetchall()]
+            if "action" in cols:
+                # migrate from (user_id, action, count) schema
+                await db.execute("""
+                    INSERT INTO user_actions_new (user_id, snapshots, clips_30, clips_3min, streams)
+                    SELECT user_id,
+                        COALESCE(SUM(CASE WHEN action='snapshot' THEN count ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN action='clip_30'  THEN count ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN action='clip_180' THEN count ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN action='stream'   THEN count ELSE 0 END), 0)
+                    FROM user_actions GROUP BY user_id
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        snapshots  = snapshots  + excluded.snapshots,
+                        clips_30   = clips_30   + excluded.clips_30,
+                        clips_3min = clips_3min + excluded.clips_3min,
+                        streams    = streams    + excluded.streams
+                """)
+                await db.execute("DROP TABLE user_actions")
+                await db.execute("ALTER TABLE user_actions_new RENAME TO user_actions")
+            elif "occurred_at" in cols:
+                # migrate from old raw-events schema
+                await db.execute("""
+                    INSERT INTO user_actions_new (user_id, snapshots, clips_30, clips_3min, streams)
+                    SELECT user_id,
+                        SUM(action='snapshot'), SUM(action='clip_30'),
+                        SUM(action='clip_180'), SUM(action='stream')
+                    FROM user_actions GROUP BY user_id
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        snapshots  = snapshots  + excluded.snapshots,
+                        clips_30   = clips_30   + excluded.clips_30,
+                        clips_3min = clips_3min + excluded.clips_3min,
+                        streams    = streams    + excluded.streams
+                """)
+                await db.execute("DROP TABLE user_actions")
+                await db.execute("ALTER TABLE user_actions_new RENAME TO user_actions")
+            else:
+                await db.execute("DROP TABLE user_actions_new")
+        except Exception:
+            pass
+
+        # replace gecko_zone_events with single-row gecko_zone table
+        try:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS gecko_zone (
+                    id         INTEGER PRIMARY KEY CHECK (id = 1),
+                    zone       TEXT NOT NULL,
+                    confidence REAL,
+                    updated_at DATETIME NOT NULL
+                )
+            """)
+        except Exception:
+            pass
+        try:
+            # migrate latest zone from gecko_zone_events if exists
+            async with db.execute(
+                "SELECT zone, confidence, occurred_at FROM gecko_zone_events ORDER BY occurred_at DESC LIMIT 1"
+            ) as cur:
+                row = await cur.fetchone()
+            if row:
+                await db.execute(
+                    "INSERT OR IGNORE INTO gecko_zone (id, zone, confidence, updated_at) VALUES (1,?,?,?)",
+                    (row["zone"], row["confidence"], row["occurred_at"]),
+                )
+        except Exception:
+            pass
+        try:
+            await db.execute("DROP TABLE gecko_zone_events")
+        except Exception:
+            pass
+
+        # cricket_feedings table
+        try:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS cricket_feedings (
+                    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fed_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        except Exception:
+            pass
+
+        # drop empty legacy tables
+        for t in ("photos",):
+            try:
+                await db.execute(f"DROP TABLE IF EXISTS {t}")
+            except Exception:
+                pass
+
         await db.commit()
     await _init_media_db()
 
@@ -155,26 +246,30 @@ async def _init_media_db():
         await db.commit()
 
 
+# ── User actions ──
+
+_ACTION_COL = {"snapshot": "snapshots", "clip_30": "clips_30", "clip_180": "clips_3min", "stream": "streams"}
+
+
 async def log_user_action(user_id: int, username: str | None, action: str):
+    col = _ACTION_COL.get(action)
+    if not col:
+        return
     async with _db(write=True) as db:
         await db.execute(
-            "INSERT INTO user_actions (user_id, username, action) VALUES (?, ?, ?)",
-            (user_id, username, action),
+            f"INSERT INTO user_actions (user_id, {col}) VALUES (?, 1)"
+            f" ON CONFLICT(user_id) DO UPDATE SET {col} = {col} + 1",
+            (user_id,),
         )
 
 
 async def get_user_stats() -> list[dict]:
     async with _db() as db:
         async with db.execute("""
-            SELECT username, user_id,
-                SUM(action = 'snapshot')  AS snapshots,
-                SUM(action = 'clip_30')   AS clips_30,
-                SUM(action = 'clip_180')  AS clips_3min,
-                SUM(action = 'stream')    AS streams,
-                MAX(occurred_at)          AS last_seen
-            FROM user_actions
-            GROUP BY user_id
-            ORDER BY snapshots + clips_30 + clips_3min + streams DESC
+            SELECT u.username, a.user_id, a.snapshots, a.clips_30, a.clips_3min, a.streams
+            FROM user_actions a
+            LEFT JOIN allowed_users u ON u.user_id = a.user_id
+            ORDER BY a.snapshots + a.clips_30 + a.clips_3min + a.streams DESC
         """) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
@@ -211,9 +306,18 @@ async def set_schedule_paused(id: str, paused: bool):
 async def log_lamp_event(lamp_type: str, action: str, source: str):
     async with _db(write=True) as db:
         await db.execute(
-            "INSERT INTO lamp_events (lamp_type, action, source) VALUES (?,?,?)",
-            (lamp_type, action, source),
+            "INSERT INTO lamp_events (occurred_at, lamp_type, action, source) VALUES (?,?,?,?)",
+            (datetime.now(), lamp_type, action, source),
         )
+
+
+async def purge_lamp_events():
+    """Удаляет lamp_events старше 2 дней."""
+    cutoff = datetime.now() - timedelta(days=2)
+    async with _db(write=True) as db:
+        cur = await db.execute("DELETE FROM lamp_events WHERE occurred_at < ?", (cutoff,))
+        if cur.rowcount:
+            log.info("purged %d lamp_events older than 2 days", cur.rowcount)
 
 
 # ── Sensor readings ──
@@ -236,21 +340,74 @@ async def get_allowed_users() -> list[dict]:
 
 async def is_user_allowed(user_id: int) -> bool:
     async with _db() as db:
-        async with db.execute("SELECT 1 FROM allowed_users WHERE user_id = ?", (user_id,)) as cur:
+        async with db.execute(
+            "SELECT 1 FROM allowed_users WHERE user_id = ? AND revoked = 0", (user_id,)
+        ) as cur:
+            return await cur.fetchone() is not None
+
+
+async def was_user_revoked(user_id: int) -> bool:
+    """Был ли пользователь заблокировавшим бота и лишён доступа."""
+    async with _db() as db:
+        async with db.execute(
+            "SELECT 1 FROM allowed_users WHERE user_id = ? AND revoked = 1", (user_id,)
+        ) as cur:
             return await cur.fetchone() is not None
 
 
 async def add_allowed_user(user_id: int, username: str = None, first_name: str = None):
     async with _db(write=True) as db:
         await db.execute(
-            "INSERT OR IGNORE INTO allowed_users (user_id, username, first_name) VALUES (?,?,?)",
+            """INSERT INTO allowed_users (user_id, username, first_name)
+               VALUES (?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET
+                   revoked = 0, blocked_bot = 0,
+                   username = excluded.username,
+                   first_name = excluded.first_name""",
             (user_id, username, first_name),
+        )
+
+
+async def update_user_info(user_id: int, username: str | None, first_name: str | None):
+    """Обновляет username и first_name."""
+    async with _db(write=True) as db:
+        await db.execute(
+            "UPDATE allowed_users SET username = ?, first_name = ? WHERE user_id = ?",
+            (username, first_name, user_id),
         )
 
 
 async def remove_allowed_user(user_id: int):
     async with _db(write=True) as db:
         await db.execute("DELETE FROM allowed_users WHERE user_id = ?", (user_id,))
+
+
+async def set_user_blocked(user_id: int, blocked: bool):
+    async with _db(write=True) as db:
+        if blocked:
+            await db.execute(
+                "UPDATE allowed_users SET blocked_bot = 1, blocked_at = ?, revoked = 1 WHERE user_id = ?",
+                (datetime.now(), user_id),
+            )
+        else:
+            await db.execute(
+                "UPDATE allowed_users SET blocked_bot = 0 WHERE user_id = ?",
+                (user_id,),
+            )
+
+
+async def get_blocked_user_ids() -> set[int]:
+    async with _db() as db:
+        async with db.execute("SELECT user_id FROM allowed_users WHERE blocked_bot = 1") as cur:
+            return {r["user_id"] for r in await cur.fetchall()}
+
+
+async def get_blocked_users() -> list[dict]:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT user_id, username, first_name, blocked_at FROM allowed_users WHERE blocked_bot = 1 ORDER BY blocked_at DESC"
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
 
 # ── Access requests ──
@@ -280,7 +437,7 @@ async def has_pending_request(user_id: int) -> bool:
             return await cur.fetchone() is not None
 
 
-# ── Photos ──
+# ── Photos (media db) ──
 
 async def save_photo(data: bytes, source: str = "web", caption: str = None) -> int:
     async with _media_db(write=True) as db:
@@ -315,7 +472,7 @@ async def purge_old_photos():
     async with _media_db(write=True) as db:
         cur = await db.execute("DELETE FROM photos WHERE taken_at < datetime('now', '-1 hour')")
         if cur.rowcount:
-            print(f"[Purge] deleted {cur.rowcount} photos older than 24h")
+            log.info("purged %d photos older than 1h", cur.rowcount)
 
 
 # ── Motion events ──
@@ -360,15 +517,115 @@ async def load_last_feeding():
                 _last_feeding_time = datetime.fromisoformat(row["fed_at"])
 
 
-async def log_feeding():
+async def log_feeding(notes: str | None = None):
     global _last_feeding_time
     _last_feeding_time = datetime.now()
     async with _db(write=True) as db:
-        await db.execute("INSERT INTO feedings (fed_at) VALUES (?)", (_last_feeding_time,))
+        await db.execute("INSERT INTO feedings (fed_at, notes) VALUES (?, ?)", (_last_feeding_time, notes))
+
+
+async def append_feeding_note(note: str):
+    """Добавляет заметку к сегодняшнему кормлению; если кормления нет — создаёт новое."""
+    async with _db(write=True) as db:
+        async with db.execute(
+            "SELECT id, notes FROM feedings WHERE DATE(fed_at) = DATE('now', 'localtime') ORDER BY fed_at DESC LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+        if row:
+            existing = row["notes"] or ""
+            parts = [p for p in existing.split("+") if p]
+            if note not in parts:
+                parts.append(note)
+            await db.execute("UPDATE feedings SET notes = ? WHERE id = ?", ("+".join(parts), row["id"]))
+        else:
+            await log_feeding(notes=note)
 
 
 def get_last_feeding_cached() -> datetime | None:
     return _last_feeding_time
+
+
+async def get_last_feeding_db() -> datetime | None:
+    """Читает дату последнего кормления из БД (не из кэша)."""
+    async with _db() as db:
+        async with db.execute("SELECT fed_at FROM feedings ORDER BY fed_at DESC LIMIT 1") as cur:
+            row = await cur.fetchone()
+            return datetime.fromisoformat(row["fed_at"]) if row else None
+
+
+async def get_feeding_count() -> int:
+    async with _db() as db:
+        async with db.execute("SELECT COUNT(*) as cnt FROM feedings") as cur:
+            row = await cur.fetchone()
+            return row["cnt"] if row else 0
+
+
+async def get_last_note_date(note: str) -> datetime | None:
+    """Возвращает дату последнего кормления с указанной заметкой (например 'hornworm')."""
+    async with _db() as db:
+        async with db.execute(
+            "SELECT fed_at FROM feedings WHERE notes LIKE ? ORDER BY fed_at DESC LIMIT 1",
+            (f"%{note}%",),
+        ) as cur:
+            row = await cur.fetchone()
+            return datetime.fromisoformat(row["fed_at"]) if row else None
+
+
+async def log_cricket_purchase(count: int = 20):
+    async with _db(write=True) as db:
+        await db.execute("INSERT INTO cricket_batches (bought_at, count) VALUES (?, ?)", (datetime.now(), count))
+
+
+async def log_cricket_feeding():
+    async with _db(write=True) as db:
+        await db.execute("INSERT INTO cricket_feedings (fed_at) VALUES (?)", (datetime.now(),))
+
+
+async def get_last_cricket_feeding() -> datetime | None:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT fed_at FROM cricket_feedings ORDER BY fed_at DESC LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+            return datetime.fromisoformat(row["fed_at"]) if row else None
+
+
+async def log_cricket_ran_out():
+    """Помечает последнюю партию как закончившуюся — сдвигает bought_at так чтобы days_since >= LIFESPAN."""
+    LIFESPAN = 6
+    ran_out_date = datetime.now() - timedelta(days=LIFESPAN)
+    async with _db(write=True) as db:
+        async with db.execute("SELECT id FROM cricket_batches ORDER BY bought_at DESC LIMIT 1") as cur:
+            row = await cur.fetchone()
+        if row:
+            await db.execute("UPDATE cricket_batches SET bought_at = ?, count = 0 WHERE id = ?",
+                             (ran_out_date, row["id"]))
+        else:
+            await db.execute("INSERT INTO cricket_batches (bought_at, count) VALUES (?, ?)", (ran_out_date, 0))
+
+
+async def get_last_cricket_purchase() -> tuple[datetime | None, int]:
+    """Возвращает (дата закупки, кол-во) последней партии или (None, 0)."""
+    async with _db() as db:
+        async with db.execute(
+            "SELECT bought_at, count FROM cricket_batches ORDER BY bought_at DESC LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return None, 0
+            return datetime.fromisoformat(row["bought_at"]), row["count"]
+
+
+async def get_next_feeding_supplements() -> list[str]:
+    """Возвращает список добавок для следующего кормления."""
+    supplements = []
+    last_vitamins = await get_last_note_date("vitamins")
+    if last_vitamins is None or (datetime.now() - last_vitamins).days >= 10:
+        supplements.append("vitamins")
+    last_hornworm = await get_last_note_date("hornworm")
+    if last_hornworm is None or (datetime.now() - last_hornworm).days >= 14:
+        supplements.append("hornworm")
+    return supplements
 
 
 # ── Gecko state ──
@@ -392,34 +649,29 @@ async def get_gecko_state() -> tuple[str | None, datetime | None]:
             return row["state"], datetime.fromisoformat(row["updated_at"])
 
 
-# ── Gecko zone ──
+# ── Gecko zone (single-row, latest only) ──
 
 async def log_gecko_zone(zone: str, confidence: float | None = None):
     async with _db(write=True) as db:
         await db.execute(
-            "INSERT INTO gecko_zone_events (occurred_at, zone, confidence) VALUES (?, ?, ?)",
-            (datetime.now(), zone, round(confidence, 3) if confidence is not None else None),
+            "INSERT INTO gecko_zone (id, zone, confidence, updated_at) VALUES (1, ?, ?, ?)"
+            " ON CONFLICT(id) DO UPDATE SET zone=excluded.zone, confidence=excluded.confidence, updated_at=excluded.updated_at",
+            (zone, round(confidence, 3) if confidence is not None else None, datetime.now()),
         )
 
 
 async def get_gecko_zone() -> tuple[str | None, datetime | None]:
     async with _db() as db:
-        async with db.execute(
-            "SELECT zone, occurred_at FROM gecko_zone_events ORDER BY occurred_at DESC LIMIT 1"
-        ) as cur:
+        async with db.execute("SELECT zone, updated_at FROM gecko_zone WHERE id = 1") as cur:
             row = await cur.fetchone()
             if not row:
                 return None, None
-            return row["zone"], datetime.fromisoformat(row["occurred_at"])
+            return row["zone"], datetime.fromisoformat(row["updated_at"])
 
 
-async def get_gecko_zone_history(limit: int = 20) -> list[dict]:
-    async with _db() as db:
-        async with db.execute(
-            "SELECT zone, occurred_at FROM gecko_zone_events ORDER BY occurred_at DESC LIMIT ?",
-            (limit,),
-        ) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+async def get_zone_stats(hours: int = 24) -> list[dict]:
+    """Заглушка — зональная история больше не хранится."""
+    return []
 
 
 async def get_sensor_history(hours: int = 24) -> list[dict]:
@@ -432,15 +684,7 @@ async def get_sensor_history(hours: int = 24) -> list[dict]:
             return [dict(r) for r in await cur.fetchall()]
 
 
-async def get_zone_stats(hours: int = 24) -> list[dict]:
-    async with _db() as db:
-        async with db.execute(
-            "SELECT zone, COUNT(*) as count FROM gecko_zone_events "
-            "WHERE occurred_at >= datetime('now', ? || ' hours') GROUP BY zone ORDER BY count DESC",
-            (f"-{hours}",),
-        ) as cur:
-            return [dict(r) for r in await cur.fetchall()]
-
+# ── Lang ──
 
 async def get_user_lang(user_id: int) -> str | None:
     async with _db() as db:
@@ -458,9 +702,60 @@ async def set_user_lang(user_id: int, lang: str):
         )
 
 
-async def get_feeding_history(limit: int = 10) -> list[datetime]:
+# ── Feeding history ──
+
+async def get_feeding_history(limit: int = 10) -> list[dict]:
     async with _db() as db:
         async with db.execute(
-            "SELECT fed_at FROM feedings ORDER BY fed_at DESC LIMIT ?", (limit,)
+            "SELECT fed_at, notes FROM feedings ORDER BY fed_at DESC LIMIT ?", (limit,)
         ) as cur:
-            return [datetime.fromisoformat(r["fed_at"]) for r in await cur.fetchall()]
+            return [
+                {"fed_at": datetime.fromisoformat(r["fed_at"]), "notes": r["notes"]}
+                for r in await cur.fetchall()
+            ]
+
+
+async def get_cricket_stats() -> dict:
+    """Суммарная статистика по количеству сверчков."""
+    async with _db() as db:
+        async with db.execute("SELECT notes FROM feedings WHERE notes LIKE '%crickets:%'") as cur:
+            rows = await cur.fetchall()
+    total = 0
+    count = 0
+    for row in rows:
+        for part in (row["notes"] or "").split("+"):
+            if part.startswith("crickets:"):
+                try:
+                    total += int(part.split(":", 1)[1])
+                    count += 1
+                except ValueError:
+                    pass
+    return {"total": total, "count": count, "avg": round(total / count, 1) if count else 0}
+
+
+# ── Alert messages ──
+
+async def get_alert_message(user_id: int, alert_type: str) -> int | None:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT message_id FROM alert_messages WHERE user_id=? AND alert_type=?",
+            (user_id, alert_type),
+        ) as cur:
+            row = await cur.fetchone()
+            return row["message_id"] if row else None
+
+
+async def save_alert_message(user_id: int, alert_type: str, message_id: int):
+    async with _db(write=True) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO alert_messages (user_id, alert_type, message_id) VALUES (?,?,?)",
+            (user_id, alert_type, message_id),
+        )
+
+
+async def delete_alert_message(user_id: int, alert_type: str):
+    async with _db(write=True) as db:
+        await db.execute(
+            "DELETE FROM alert_messages WHERE user_id=? AND alert_type=?",
+            (user_id, alert_type),
+        )

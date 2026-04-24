@@ -192,6 +192,106 @@ async function deleteLightboxPhoto(e) {
 
 loadGallery(true);
 
+// ── Sensor history chart ──
+let _sensorChart = null;
+
+async function loadSensorChart(hours = 24) {
+    const canvas = document.getElementById('sensor-chart');
+    const empty  = document.getElementById('chart-empty');
+    if (!canvas) return;
+
+    try {
+        const r = await fetch(`/api/sensor-history?hours=${hours}`);
+        if (!r.ok) return;
+        const rows = await r.json();
+
+        if (rows.length === 0) {
+            canvas.style.display = 'none';
+            empty.style.display  = '';
+            return;
+        }
+        canvas.style.display = '';
+        empty.style.display  = 'none';
+
+        const labels = rows.map(r => {
+            const d = new Date(r.t.replace(' ', 'T'));
+            return hours <= 24
+                ? d.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })
+                : d.toLocaleDateString('ru', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        });
+        const temps = rows.map(r => r.temp);
+        const hums  = rows.map(r => r.hum);
+
+        const cfg = {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: 'Температура (°C)',
+                        data: temps,
+                        borderColor: '#22c55e',
+                        backgroundColor: 'rgba(34,197,94,0.08)',
+                        pointRadius: rows.length > 50 ? 0 : 2,
+                        borderWidth: 1.5,
+                        tension: 0.3,
+                        fill: true,
+                        yAxisID: 'yT',
+                    },
+                    {
+                        label: 'Влажность (%)',
+                        data: hums,
+                        borderColor: '#60a5fa',
+                        backgroundColor: 'rgba(96,165,250,0.06)',
+                        pointRadius: rows.length > 50 ? 0 : 2,
+                        borderWidth: 1.5,
+                        tension: 0.3,
+                        fill: true,
+                        yAxisID: 'yH',
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { labels: { color: '#808080', font: { size: 11 }, boxWidth: 12 } },
+                    tooltip: { backgroundColor: '#1e2e1e', titleColor: '#d0d0d0', bodyColor: '#a0a0a0', borderColor: '#2a3e2a', borderWidth: 1 },
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#505050', font: { size: 10 }, maxTicksLimit: 8, maxRotation: 0 },
+                        grid:  { color: '#1a251a' },
+                    },
+                    yT: {
+                        position: 'left',
+                        ticks: { color: '#22c55e', font: { size: 10 }, callback: v => v + '°' },
+                        grid:  { color: '#1a251a' },
+                    },
+                    yH: {
+                        position: 'right',
+                        ticks: { color: '#60a5fa', font: { size: 10 }, callback: v => v + '%' },
+                        grid:  { drawOnChartArea: false },
+                    },
+                },
+            },
+        };
+
+        if (_sensorChart) _sensorChart.destroy();
+        _sensorChart = new Chart(canvas, cfg);
+    } catch (e) {
+        console.error('chart error', e);
+    }
+}
+
+function setChartRange(btn, hours) {
+    document.querySelectorAll('.chart-range-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    loadSensorChart(hours);
+}
+
+loadSensorChart(24);
+
 // ── Camera ──
 async function camCapture(type) {
     const isSnap = type === 'snapshot';

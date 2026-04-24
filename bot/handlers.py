@@ -1,8 +1,11 @@
 import asyncio
 import io
+import logging
 import os
 import tempfile
 from datetime import datetime
+
+log = logging.getLogger(__name__)
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ContextTypes
@@ -11,13 +14,18 @@ from config import TELEGRAM_SUPER_ADMINS
 from services import tuya, camera
 from database import (
     add_access_request, get_access_requests, remove_access_request, has_pending_request,
-    add_allowed_user, remove_allowed_user,
+    add_allowed_user, remove_allowed_user, update_user_info,
     get_schedules, save_schedule, delete_schedule, set_schedule_paused, log_lamp_event,
     log_feeding, get_feeding_history, get_motion_event, update_motion_status, get_allowed_users,
     log_user_action, get_user_lang, get_sensor_history, get_zone_stats,
+    get_next_feeding_supplements, log_cricket_purchase,
+    get_feeding_count, get_last_note_date, get_last_cricket_purchase, get_last_feeding_cached,
+    delete_alert_message, get_alert_message, save_alert_message, log_cricket_ran_out,
+    set_user_blocked, was_user_revoked, get_cricket_stats,
+    log_cricket_feeding, get_last_cricket_feeding, append_feeding_note,
 )
 from bot.access import check_access, is_super_admin
-from bot.keyboards import main_keyboard, schedules_keyboard, admin_keyboard, stream_url
+from bot.keyboards import main_keyboard, schedules_keyboard, admin_keyboard, feeding_keyboard, cricket_count_keyboard, stream_url
 from bot.i18n import get_lang, set_lang, toggle_lang
 from config import STREAM_BASE_URL
 from bot.formatters import status_text, user_status_text
@@ -28,7 +36,16 @@ from bot.formatters import status_text, user_status_text
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not await check_access(user.id):
-        if await has_pending_request(user.id):
+        if await was_user_revoked(user.id):
+            await set_user_blocked(user.id, False)  # сбрасываем blocked_bot, доступ всё ещё revoked
+            await update.message.reply_text(
+                "🦎 *Gecko Home*\n\nВернулся? Гекончик подумает над твоим поведением...",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📩 Запросить доступ", callback_data="request_access")]
+                ]),
+            )
+        elif await has_pending_request(user.id):
             await update.message.reply_text("⏳ Ваш запрос ожидает подтверждения.")
         else:
             await update.message.reply_text(
@@ -39,6 +56,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 ]),
             )
         return
+    await update_user_info(user.id, user.username, user.first_name)
     # убираем reply keyboard если была
     try:
         tmp = await update.message.reply_text(".", reply_markup=ReplyKeyboardRemove())
@@ -65,15 +83,11 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.delete()
     except Exception:
         pass
-    # редактируем старое сообщение если есть
+    # удаляем старое главное сообщение и шлём новое последним
     prev_id = ctx.user_data.get("status_msg_id")
     if prev_id:
         try:
-            await ctx.bot.edit_message_text(
-                text, chat_id=update.effective_chat.id, message_id=prev_id,
-                parse_mode="Markdown", reply_markup=kb,
-            )
-            return
+            await ctx.bot.delete_message(update.effective_chat.id, prev_id)
         except Exception:
             pass
     msg = await ctx.bot.send_message(update.effective_chat.id, text, parse_mode="Markdown", reply_markup=kb)
@@ -84,19 +98,21 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not await check_access(user.id):
         return
+    # удаляем команду /status
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
     lang = await get_lang(user.id)
     text = await status_text(lang) if is_super_admin(user.id) else await user_status_text(lang)
+    # удаляем старое главное сообщение и шлём новое последним
     prev_id = ctx.user_data.get("status_msg_id")
     if prev_id:
         try:
-            await ctx.bot.edit_message_text(
-                text, chat_id=update.effective_chat.id, message_id=prev_id,
-                parse_mode="Markdown", reply_markup=await main_keyboard(user.id),
-            )
-            return
+            await ctx.bot.delete_message(update.effective_chat.id, prev_id)
         except Exception:
             pass
-    msg = await update.message.reply_text(text, parse_mode="Markdown", reply_markup=await main_keyboard(user.id))
+    msg = await ctx.bot.send_message(update.effective_chat.id, text, parse_mode="Markdown", reply_markup=await main_keyboard(user.id))
     ctx.user_data["status_msg_id"] = msg.message_id
 
 
@@ -123,6 +139,8 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.answer("⛔ Нет доступа.", show_alert=True)
         return
 
+    await update_user_info(user_id, user.username, user.first_name)
+
     try:
         await query.answer()
     except Exception:
@@ -131,26 +149,44 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data == "noop":
         return
 
+    if data.startswith("timelapse_publish_") and is_super_admin(user_id):
+        day = data.removeprefix("timelapse_publish_")
+        import os
+        from services.timelapse import TIMELAPSE_VIDEOS_DIR, _send_video
+        path = os.path.join(TIMELAPSE_VIDEOS_DIR, f"timelapse_{day}_15fps.mp4")
+        if not os.path.exists(path):
+            await query.answer("Файл не найден", show_alert=True)
+            return
+        from config import TELEGRAM_ADMINS
+        from database import get_allowed_users, get_blocked_user_ids
+        allowed = {u["user_id"] for u in await get_allowed_users()}
+        blocked = await get_blocked_user_ids()
+        everyone = (TELEGRAM_SUPER_ADMINS | TELEGRAM_ADMINS | allowed) - {user_id} - blocked
+        await _send_video(path, f"🎬 Таймлапс {day}", everyone)
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.answer("Отправлено!")
+        return
+
     if data == "lang_toggle":
         await toggle_lang(user_id)
-        return await _handle_refresh(query, user_id)
+        return await _handle_refresh(query, ctx, user_id)
 
     if data in ("lang_set_ru", "lang_set_en"):
         lang = data.replace("lang_set_", "")
         await set_lang(user_id, lang)
         text = await status_text(lang) if is_super_admin(user_id) else await user_status_text(lang)
         kb = await main_keyboard(user_id)
-        msg = await query.message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
-        ctx.user_data["status_msg_id"] = msg.message_id
         try:
             await query.message.delete()
         except Exception:
             pass
+        msg = await query.message.chat.send_message(text, parse_mode="Markdown", reply_markup=kb)
+        ctx.user_data["status_msg_id"] = msg.message_id
         return
 
     # Navigation
     if data in ("back_main", "refresh"):
-        return await _handle_refresh(query, user_id)
+        return await _handle_refresh(query, ctx, user_id)
 
     # Lamps
     # Lamps — super admin only
@@ -202,11 +238,54 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(f"📡 Стрим: {url}")
         return
 
+    # Feeding menu
+    if data == "feeding_menu" and is_super_admin(user_id):
+        lang = await get_lang(user_id)
+        await _safe_edit(query, "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
+                         parse_mode="Markdown", reply_markup=await feeding_keyboard(lang))
+        return
+
+    # Calendar
+    if data == "calendar" and is_super_admin(user_id):
+        return await _handle_calendar(query)
+
     # Feeding
     if data == "fed" and is_super_admin(user_id):
-        return await _handle_fed(query, user_id)
+        return await _handle_fed(query, user_id, ctx)
+    if data.startswith("fed_count_") and is_super_admin(user_id):
+        try:
+            count = int(data.split("_")[-1])
+        except ValueError:
+            return
+        return await _handle_fed_count(query, user_id, ctx, count)
+    if data == "fed_hornworm" and is_super_admin(user_id):
+        return await _handle_fed_note(query, user_id, "hornworm", "🐛 Бражник записан!", "🐛 Hornworm logged!")
+    if data == "fed_vitamins" and is_super_admin(user_id):
+        return await _handle_fed_note(query, user_id, "vitamins", "💊 Витамины записаны!", "💊 Vitamins logged!")
     if data == "feeding_history" and is_super_admin(user_id):
         return await _handle_feeding_history(query)
+    if data == "cricket_stats" and is_super_admin(user_id):
+        return await _handle_cricket_stats(query)
+    if data == "cricket_bought" and is_super_admin(user_id):
+        return await _handle_cricket_bought(query, user_id, ctx)
+    if data == "cricket_out" and is_super_admin(user_id):
+        return await _handle_cricket_out(query, user_id, ctx)
+    if data == "cricket_feed" and is_super_admin(user_id):
+        return await _handle_cricket_feed(query, user_id)
+
+    # Alert buttons (из отдельного алерт-сообщения)
+    if data == "alert_fed" and is_super_admin(user_id):
+        return await _handle_alert_fed(query, user_id)
+    if data.startswith("alert_fed_count_") and is_super_admin(user_id):
+        try:
+            count = int(data.split("_")[-1])
+        except ValueError:
+            return
+        return await _handle_alert_fed_count(query, user_id, count)
+    if data == "alert_fed_cancel" and is_super_admin(user_id):
+        return await _handle_alert_fed_cancel(query)
+    if data == "alert_cricket" and is_super_admin(user_id):
+        return await _handle_alert_cricket(query, user_id)
 
     # Motion approval
     if data.startswith("motion_pub_") and is_super_admin(user_id):
@@ -324,11 +403,12 @@ async def _handle_deny(query, ctx, data):
         pass
 
 
-async def _handle_refresh(query, user_id):
+async def _handle_refresh(query, ctx, user_id):
     try:
         lang = await get_lang(user_id)
         text = await status_text(lang) if is_super_admin(user_id) else await user_status_text(lang)
-        await _safe_edit(query, text, parse_mode="Markdown", reply_markup=await main_keyboard(user_id))
+        kb = await main_keyboard(user_id)
+        await _replace_main(query, ctx, user_id, text, kb)
     except Exception:
         pass
 
@@ -354,6 +434,50 @@ async def _handle_lamp(query, user_id, lamp, on):
         pass
 
 
+async def _bump_alerts(ctx, user_id: int):
+    """Пересылает активные алерты вниз (после главного сообщения)."""
+    alert_defs = {
+        "feeding": ("🔴 *Пора кормить!*", [
+            InlineKeyboardButton("🍎 Покормил", callback_data="alert_fed"),
+            InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket"),
+        ]),
+        "cricket": ("🔴 *Сверчки закончились!*\nКупи новую партию.", [
+            InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket"),
+        ]),
+    }
+    for alert_type, (text, buttons) in alert_defs.items():
+        msg_id = await get_alert_message(user_id, alert_type)
+        if not msg_id:
+            continue
+        try:
+            await ctx.bot.delete_message(chat_id=user_id, message_id=msg_id)
+        except Exception:
+            pass
+        try:
+            sent = await ctx.bot.send_message(
+                chat_id=user_id, text=text, parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([buttons]),
+            )
+            await save_alert_message(user_id, alert_type, sent.message_id)
+            await set_user_blocked(user_id, False)
+        except Exception as e:
+            if "bot was blocked" in str(e) or "Forbidden" in str(e):
+                await set_user_blocked(user_id, True)
+                log.warning("user %s blocked the bot", user_id)
+
+
+async def _dismiss_alert(ctx, user_id: int, alert_type: str):
+    """Удаляет алерт из чата если он больше не актуален."""
+    msg_id = await get_alert_message(user_id, alert_type)
+    if not msg_id:
+        return
+    try:
+        await ctx.bot.delete_message(chat_id=user_id, message_id=msg_id)
+    except Exception:
+        pass
+    await delete_alert_message(user_id, alert_type)
+
+
 async def _replace_main(query, ctx, user_id, text, kb):
     """Удаляет текущее главное сообщение и шлёт новое — чтобы оно было последним."""
     try:
@@ -363,6 +487,7 @@ async def _replace_main(query, ctx, user_id, text, kb):
     msg = await query.message.chat.send_message(text, parse_mode="Markdown", reply_markup=kb)
     if ctx is not None:
         ctx.user_data["status_msg_id"] = msg.message_id
+    await _bump_alerts(ctx, user_id)
 
 
 async def _safe_edit(query, text, **kwargs):
@@ -377,7 +502,7 @@ async def _handle_snapshot(query, user_id, ctx):
         await _safe_edit(query, "❌ Камера не настроена.")
         return
     u = query.from_user
-    print(f"[Bot] [{datetime.now().strftime('%H:%M:%S')}] Snapshot requested by @{u.username or u.first_name} ({u.id})")
+    log.info("snapshot requested by @%s (%s)", u.username or u.first_name, u.id)
     await log_user_action(u.id, u.username or u.first_name, "snapshot")
     await _safe_edit(query, "📸 Делаю снимок...")
     path = await camera.snapshot()
@@ -405,7 +530,7 @@ async def _handle_clip(query, user_id, duration: int = 30, ctx=None):
         return
     u = query.from_user
     label = "3 мин" if duration >= 60 else f"{duration}с"
-    print(f"[Bot] [{datetime.now().strftime('%H:%M:%S')}] Clip {label} requested by @{u.username or u.first_name} ({u.id})")
+    log.info("clip %s requested by @%s (%s)", label, u.username or u.first_name, u.id)
     await log_user_action(u.id, u.username or u.first_name, f"clip_{duration}")
     await _safe_edit(query, f"🎬 Записываю {label}...")
     path = await camera.clip(duration)
@@ -521,24 +646,309 @@ async def _handle_remove_user(query, rm_id):
         pass
 
 
+async def _handle_calendar(query):
+    from datetime import timedelta
+    now = datetime.now()
+
+    last_feeding = get_last_feeding_cached()
+    last_hornworm = await get_last_note_date("hornworm")
+    last_vitamins = await get_last_note_date("vitamins")
+    cricket_bought, _ = await get_last_cricket_purchase()
+
+    lines = ["📅 *Календарь ухода*\n━━━━━━━━━━━━━━━\n"]
+
+    # Следующее кормление
+    if last_feeding:
+        next_feed = last_feeding + timedelta(days=2)
+        delta = (next_feed.date() - now.date()).days
+        if delta < 0:
+            marker = "🔴"
+            when = f"просрочено на {-delta} д."
+        elif delta == 0:
+            marker = "🟡"
+            when = "сегодня"
+        elif delta == 1:
+            marker = "🟡"
+            when = "завтра"
+        else:
+            marker = "🟢"
+            when = f"через {delta} д."
+        lines.append(f"{marker} 🍎 Кормление: *{next_feed.strftime('%d.%m')}* ({when})")
+    else:
+        lines.append("🔴 🍎 Кормление: *не записано*")
+
+    # Следующие витамины
+    if last_vitamins:
+        next_vitamins = last_vitamins + timedelta(days=10)
+        delta_v = (next_vitamins.date() - now.date()).days
+        if delta_v <= 0:
+            v_marker = "🔴"
+            when_v = "сегодня" if delta_v == 0 else f"просрочено на {-delta_v} д."
+        elif delta_v == 1:
+            v_marker = "🟡"
+            when_v = "завтра"
+        elif delta_v <= 3:
+            v_marker = "🟡"
+            when_v = f"через {delta_v} д."
+        else:
+            v_marker = "🟢"
+            when_v = f"через {delta_v} д."
+        lines.append(f"{v_marker} 💊 Витамины: *{next_vitamins.strftime('%d.%m')}* ({when_v})")
+    else:
+        lines.append("🔴 💊 Витамины: *не записано*")
+
+    # Следующий бражник
+    if last_hornworm:
+        next_hornworm = last_hornworm + timedelta(days=14)
+        delta = (next_hornworm.date() - now.date()).days
+        if delta < 0:
+            marker = "🔴"
+            when = f"просрочено на {-delta} д."
+        elif delta == 0:
+            marker = "🟡"
+            when = "сегодня"
+        else:
+            marker = "🟢"
+            when = f"через {delta} д."
+        lines.append(f"{marker} 🐛 Бражник: *{next_hornworm.strftime('%d.%m')}* ({when})")
+    else:
+        lines.append("🔴 🐛 Бражник: *никогда не давали*")
+
+    # Сверчки
+    if cricket_bought:
+        crickets_end = cricket_bought + timedelta(days=6)
+        delta = (crickets_end.date() - now.date()).days
+        if delta < 0:
+            marker = "🔴"
+            when = "закончились"
+        elif delta <= 1:
+            marker = "🟡"
+            when = f"остался {delta} д."
+        else:
+            marker = "🟢"
+            when = f"ещё {delta} д."
+        lines.append(f"{marker} 🦗 Сверчки до: *{crickets_end.strftime('%d.%m')}* ({when})")
+    else:
+        lines.append("⚪️ 🦗 Сверчки: *не записаны*")
+
+    text = "\n".join(lines)
+    await _safe_edit(query, text, parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup([[
+                         InlineKeyboardButton("◀ Назад", callback_data="feeding_menu")
+                     ]]))
+
+
+async def _handle_cricket_bought(query, user_id, ctx):
+    await log_cricket_purchase()
+    lang = await get_lang(user_id)
+    if lang == "en":
+        msg = "🦗 Cricket batch logged! Remember to feed them today."
+    else:
+        msg = "🦗 Партия сверчков записана! Покорми их сегодня."
+    await query.answer(msg, show_alert=True)
+    await _safe_edit(query, "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
+                     parse_mode="Markdown", reply_markup=await feeding_keyboard(lang))
+    await _dismiss_alert(ctx, user_id, "cricket")
+    await _bump_alerts(ctx, user_id)
+
+
+async def _handle_cricket_out(query, user_id, ctx):
+    lang = await get_lang(user_id)
+    if lang == "en":
+        msg = "🦗 Noted — crickets are out. Alert sent."
+        alert_text = "🔴 *Crickets ran out!*\nTime to buy a new batch."
+    else:
+        msg = "🦗 Записали — сверчки закончились. Алерт отправлен."
+        alert_text = "🔴 *Сверчки закончились!*\nКупи новую партию."
+    await log_cricket_ran_out()
+    await query.answer(msg, show_alert=True)
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket"),
+    ]])
+    for uid in TELEGRAM_SUPER_ADMINS:
+        old_id = await get_alert_message(uid, "cricket")
+        if old_id:
+            try:
+                await ctx.bot.delete_message(chat_id=uid, message_id=old_id)
+            except Exception:
+                pass
+        try:
+            sent = await ctx.bot.send_message(chat_id=uid, text=alert_text, parse_mode="Markdown", reply_markup=markup)
+            await save_alert_message(uid, "cricket", sent.message_id)
+        except Exception:
+            pass
+
+
+async def _handle_cricket_feed(query, user_id):
+    lang = await get_lang(user_id)
+    last = await get_last_cricket_feeding()
+    await log_cricket_feeding()
+    if last:
+        from datetime import datetime
+        delta = datetime.now() - last
+        hours = int(delta.total_seconds() // 3600)
+        if hours < 1:
+            ago = "только что" if lang == "ru" else "just now"
+        elif hours < 24:
+            ago = f"{hours}ч назад" if lang == "ru" else f"{hours}h ago"
+        else:
+            days = hours // 24
+            ago = f"{days}д назад" if lang == "ru" else f"{days}d ago"
+        if lang == "en":
+            msg = f"🥦 Crickets fed! Last time: {ago}."
+        else:
+            msg = f"🥦 Сверчков покормил! Предыдущий раз: {ago}."
+    else:
+        msg = "🥦 Сверчков покормил!" if lang == "ru" else "🥦 Crickets fed!"
+    await query.answer(msg, show_alert=True)
+    await _safe_edit(query, "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
+                     parse_mode="Markdown", reply_markup=await feeding_keyboard(lang))
+
+
+def _cricket_count_from_notes(notes: str | None) -> int | None:
+    for part in (notes or "").split("+"):
+        if part.startswith("crickets:"):
+            try:
+                return int(part.split(":", 1)[1])
+            except ValueError:
+                pass
+    return None
+
+
 async def _handle_feeding_history(query):
     history = await get_feeding_history(20)
     if not history:
         text = "🍎 *История кормления*\n━━━━━━━━━━━━━━━\n\n_Нет записей_"
     else:
-        lines = "\n".join(f"• {dt.strftime('%d.%m.%Y  %H:%M')}" for dt in history)
-        text = f"🍎 *История кормления*\n━━━━━━━━━━━━━━━\n\n{lines}"
+        lines = []
+        for entry in history:
+            dt = entry["fed_at"]
+            n = _cricket_count_from_notes(entry["notes"])
+            line = f"• {dt.strftime('%d.%m.%Y  %H:%M')}"
+            if n:
+                line += f"  🦗×{n}"
+            lines.append(line)
+        text = f"🍎 *История кормления*\n━━━━━━━━━━━━━━━\n\n" + "\n".join(lines)
+    await _safe_edit(query, text, parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup([
+                         [InlineKeyboardButton("📊 Статистика", callback_data="cricket_stats")],
+                         [InlineKeyboardButton("◀ Назад", callback_data="feeding_menu")],
+                     ]))
+
+
+async def _handle_cricket_stats(query):
+    stats = await get_cricket_stats()
+    total_feedings = await get_feeding_count()
+    if stats["count"] == 0:
+        text = "📊 *Статистика сверчков*\n━━━━━━━━━━━━━━━\n\n_Нет данных — количество не записывалось_"
+    else:
+        text = (
+            f"📊 *Статистика сверчков*\n━━━━━━━━━━━━━━━\n\n"
+            f"Всего кормлений: *{total_feedings}*\n"
+            f"С подсчётом: *{stats['count']}*\n"
+            f"Всего сверчков: *{stats['total']}*\n"
+            f"В среднем за кормление: *{stats['avg']}*"
+        )
     await _safe_edit(query, text, parse_mode="Markdown",
                      reply_markup=InlineKeyboardMarkup([[
-                         InlineKeyboardButton("◀ Назад", callback_data="back_main")
+                         InlineKeyboardButton("◀ Назад", callback_data="feeding_history")
                      ]]))
 
 
-async def _handle_fed(query, user_id):
-    await log_feeding()
+async def _handle_fed_note(query, user_id, note: str, msg_ru: str, msg_en: str):
+    await append_feeding_note(note)
     lang = await get_lang(user_id)
-    text = await status_text(lang)
-    await _safe_edit(query, text, parse_mode="Markdown", reply_markup=await main_keyboard(user_id))
+    await query.answer(msg_ru if lang == "ru" else msg_en, show_alert=True)
+    await _safe_edit(query, "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
+                     parse_mode="Markdown", reply_markup=await feeding_keyboard(lang))
+
+
+async def _handle_fed(query, user_id, ctx):
+    lang = await get_lang(user_id)
+    title = "🍎 *Питание*\n\nСколько сверчков дал?" if lang == "ru" else "🍎 *Feeding*\n\nHow many crickets?"
+    await _safe_edit(query, title, parse_mode="Markdown",
+                     reply_markup=cricket_count_keyboard(lang, prefix="fed_count_", back="feeding_menu"))
+
+
+async def _handle_fed_count(query, user_id, ctx, count: int):
+    supplements = await get_next_feeding_supplements()
+    parts = [f"crickets:{count}"] + supplements
+    notes = "+".join(parts)
+    await log_feeding(notes=notes)
+    lang = await get_lang(user_id)
+    confirm = f"✅ Записано! Дал {count} сверчков." if lang == "ru" else f"✅ Fed {count} crickets!"
+    await query.answer(confirm, show_alert=True)
+    await _safe_edit(query, "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
+                     parse_mode="Markdown", reply_markup=await feeding_keyboard(lang))
+    await _dismiss_alert(ctx, user_id, "feeding")
+    await _bump_alerts(ctx, user_id)
+
+
+async def _remove_alert_button(query, user_id, remove_data: str, alert_type: str):
+    """Убирает кнопку из алерт-сообщения. Если кнопок не осталось — удаляет сообщение."""
+    markup = query.message.reply_markup
+    remaining = []
+    if markup:
+        for row in markup.inline_keyboard:
+            new_row = [btn for btn in row if btn.callback_data != remove_data]
+            if new_row:
+                remaining.append(new_row)
+
+    await delete_alert_message(user_id, alert_type)
+
+    if remaining:
+        new_kb = InlineKeyboardMarkup(remaining)
+        try:
+            await query.edit_message_reply_markup(reply_markup=new_kb)
+        except Exception:
+            pass
+    else:
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+
+async def _handle_alert_fed(query, user_id):
+    lang = await get_lang(user_id)
+    title = "🔴 *Пора кормить!*\n\nСколько сверчков?" if lang == "ru" else "🔴 *Time to feed!*\n\nHow many crickets?"
+    try:
+        await query.edit_message_text(title, parse_mode="Markdown",
+                                      reply_markup=cricket_count_keyboard(lang, prefix="alert_fed_count_", back="alert_fed_cancel"))
+    except Exception:
+        pass
+
+
+async def _handle_alert_fed_count(query, user_id, count: int):
+    supplements = await get_next_feeding_supplements()
+    parts = [f"crickets:{count}"] + supplements
+    notes = "+".join(parts)
+    await log_feeding(notes=notes)
+    confirm = f"✅ Записано! Дал {count} сверчков." if await get_lang(user_id) == "ru" else f"✅ Fed {count} crickets!"
+    await query.answer(confirm, show_alert=True)
+    await delete_alert_message(user_id, "feeding")
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+
+
+async def _handle_alert_fed_cancel(query):
+    """Восстанавливаем оригинальные кнопки алерта (пользователь передумал)."""
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🍎 Покормил", callback_data="alert_fed"),
+        InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket"),
+    ]])
+    try:
+        await query.edit_message_text("🔴 *Пора кормить!*", parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
+
+
+async def _handle_alert_cricket(query, user_id):
+    await log_cricket_purchase()
+    await query.answer("🦗 Сверчки записаны!")
+    await _remove_alert_button(query, user_id, "alert_cricket", "cricket")
 
 
 async def _handle_motion_pub(query, ctx, event_id: int):
@@ -562,7 +972,7 @@ async def _handle_motion_pub(query, ctx, event_id: int):
                 caption=f"🦎 {event['caption']}",
             )
         except Exception as e:
-            print(f"[Motion] send to {uid} failed: {e}")
+            log.error("motion send to %s failed: %s", uid, e)
 
 
 async def _handle_motion_skip(query, event_id: int):

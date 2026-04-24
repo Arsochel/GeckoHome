@@ -1,6 +1,13 @@
 import asyncio
 import json
+import logging
+import signal
 from datetime import datetime
+
+from logging_config import setup_logging
+setup_logging()
+
+log = logging.getLogger(__name__)
 
 from telegram import BotCommand
 from telegram.error import NetworkError, TimedOut
@@ -28,7 +35,7 @@ async def _log_server():
             if msg:
                 print(msg)
         except Exception as e:
-            print(f"[Bot] log server error: {e}")
+            log.error("log server error: %s", e)
         finally:
             writer.close()
 
@@ -39,39 +46,63 @@ async def _log_server():
         pass
 
 
-def main():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.set_exception_handler(lambda l, ctx: None if "Task was destroyed" in ctx.get("message", "") else l.default_exception_handler(ctx))
-    loop.run_until_complete(init_db())
-    loop.run_until_complete(load_last_feeding())
+async def main():
+    await init_db()
+    await load_last_feeding()
+
     async def _error_handler(update, context):
         if isinstance(context.error, (NetworkError, TimedOut)):
-            print(f"[Bot] network hiccup: {context.error}")
+            log.warning("network hiccup: %s", context.error)
         else:
-            import traceback
-            print(f"[Bot] error: {context.error}\n{''.join(traceback.format_exception(context.error))}")
+            log.error("unhandled error", exc_info=context.error)
 
-    async def _post_init(application):
-        asyncio.create_task(_log_server())
-        await application.bot.set_my_commands([
-            BotCommand("start", "Главное меню"),
-            BotCommand("status", "Статус террариума"),
-        ])
-
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).concurrent_updates(True).post_init(_post_init).build()
+    app = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .concurrent_updates(True)
+        .build()
+    )
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     app.add_error_handler(_error_handler)
 
-    import atexit
-    atexit.register(lambda: print("[Bot] stopped"))
+    await app.initialize()
 
-    print("[Bot] started")
-    app.run_polling()
+    await app.bot.set_my_commands([
+        BotCommand("start", "Главное меню"),
+        BotCommand("status", "Статус террариума"),
+    ])
+
+    stop_event = asyncio.Event()
+
+    def _on_signal():
+        stop_event.set()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _on_signal)
+        except NotImplementedError:
+            # Windows
+            signal.signal(sig, lambda s, f: stop_event.set())
+
+    await app.start()
+    await app.updater.start_polling(drop_pending_updates=False, allowed_updates=["message", "callback_query"])
+
+    asyncio.create_task(_log_server())
+
+    log.info("started")
+
+    await stop_event.wait()
+
+    log.info("stopping...")
+    await app.updater.stop()
+    await app.stop()
+    await app.shutdown()
+    log.info("stopped")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

@@ -6,7 +6,7 @@
   Левый клик — добавить точку
   Правый клик — отменить последнюю точку
   Enter — завершить зону
-  1/2/3 — начать перерисовку зоны skull/water/hammock
+  1/2/3 — начать перерисовку зоны skull/water/sauna
   Esc — отменить текущее рисование
   Q — выход
 """
@@ -40,7 +40,7 @@ if not cap.isOpened():
     exit(1)
 
 print("[YOLO] stream opened, press Q to quit")
-print("  1/2/3 — redraw skull/water/hammock zone")
+print("  1/2/3 — redraw skull/water/sauna zone")
 print("  Left click — add point, Enter — finish, Right click — undo, Esc — cancel")
 
 zone_names  = [z["name"] for z in PRESET_ZONES]
@@ -213,7 +213,7 @@ while True:
     if editing_zone[0]:
         hint = f"editing: {editing_zone[0]} ({len(current_pts)} pts) | Enter=finish  Esc=cancel"
     else:
-        hint = "1=skull  2=water  3=hammock  Q=quit"
+        hint = "1=skull  2=water  3=sauna  Q=quit"
     cv2.putText(frame, hint, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
 
     cv2.imshow("Gecko Detect", frame)
@@ -225,7 +225,7 @@ while True:
     elif key == ord("2"):
         _start_edit("water")
     elif key == ord("3"):
-        _start_edit("hammock")
+        _start_edit("sauna")
     elif key == 13:  # Enter
         if current_pts:
             _finish_zone()

@@ -6,6 +6,7 @@
     <title>Gecko Home</title>
     <link rel="stylesheet" href="/static/admin.css">
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 </head>
 <body>
 <div class="header">
@@ -142,6 +143,19 @@
                     <div class="empty">Расписания не настроены</div>
                 {% endif %}
             </div>
+        </div>
+
+        <div class="title" style="display:flex;align-items:center;gap:12px">
+            History
+            <div class="chart-range-btns">
+                <button class="chart-range-btn active" data-h="24" onclick="setChartRange(this,24)">24h</button>
+                <button class="chart-range-btn" data-h="72" onclick="setChartRange(this,72)">3d</button>
+                <button class="chart-range-btn" data-h="168" onclick="setChartRange(this,168)">7d</button>
+            </div>
+        </div>
+        <div class="card no-hover" style="padding:16px 20px">
+            <canvas id="sensor-chart" height="110"></canvas>
+            <div id="chart-empty" style="display:none;text-align:center;opacity:0.4;padding:32px 0;font-size:13px">Нет данных</div>
         </div>
 
         <div class="title">Gallery</div>

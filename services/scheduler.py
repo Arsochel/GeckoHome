@@ -1,8 +1,11 @@
 import asyncio
+import logging
 import os
 import sqlite3
 import glob
 from datetime import datetime, timedelta
+
+log = logging.getLogger(__name__)
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -10,8 +13,8 @@ import httpx
 
 from services import tuya
 from services.highlights import update_gecko_state
-from services.timelapse import capture_timelapse_frame, generate_and_send_timelapse
-from database import get_schedules, save_schedule, log_lamp_event, log_sensor_reading, get_last_feeding_cached, purge_old_photos
+from services.timelapse import capture_timelapse_frame, generate_and_send_timelapse, generate_and_send_timelapse_preview
+from database import get_schedules, save_schedule, log_lamp_event, log_sensor_reading, get_last_feeding_cached, purge_old_photos, purge_lamp_events, get_next_feeding_supplements, get_last_cricket_purchase, get_alert_message, save_alert_message, set_user_blocked, get_blocked_user_ids, get_last_feeding_db
 from config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS,
     TEMP_ALERT_MIN, TEMP_ALERT_MAX, HUM_ALERT_MIN, HUM_ALERT_MAX, FEEDING_ALERT_DAYS,
@@ -45,7 +48,7 @@ def backup_db():
     files = sorted(glob.glob(os.path.join(_BACKUP_DIR, "gecko_*.db")))
     for old in files[:-_KEEP_BACKUPS]:
         os.remove(old)
-    print(f"[Backup] saved {dest} ({len(files)} total → kept {_KEEP_BACKUPS})")
+    log.info("backup saved: %s (%d total, kept %d)", dest, len(files), _KEEP_BACKUPS)
 
 
 _last_alert_time: float = 0
@@ -57,9 +60,12 @@ async def _send_alert(text: str):
     if now - _last_alert_time < 1800:  # не чаще раза в 30 мин
         return
     _last_alert_time = now
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_SUPER_ADMINS:
+    from config import TELEGRAM_ADMINS
+    blocked = await get_blocked_user_ids()
+    _alert_recipients = (TELEGRAM_SUPER_ADMINS | TELEGRAM_ADMINS) - blocked
+    if not TELEGRAM_BOT_TOKEN or not _alert_recipients:
         return
-    for admin_id in TELEGRAM_SUPER_ADMINS:
+    for admin_id in _alert_recipients:
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 await client.post(
@@ -72,7 +78,7 @@ async def _send_alert(text: str):
 
 async def record_sensor_readings():
     temp = tuya.get_sensor("thermometer", "va_temperature")
-    hum = tuya.get_sensor("humidifier", "va_humidity")
+    hum = tuya.get_sensor("humidifier", "va_humidity") or tuya.get_sensor("thermometer", "va_humidity")
     await log_sensor_reading(temp, hum)
     # alerts
     alerts = []
@@ -90,13 +96,85 @@ async def record_sensor_readings():
         await _send_alert("⚠️ *Gecko Home Alert*\n" + "\n".join(alerts))
 
 
+async def _send_or_edit_alert(user_id: int, alert_type: str, text: str, markup: dict):
+    """Удаляет старое алерт-сообщение и шлёт новое (чтобы оставалось внизу чата)."""
+    if not TELEGRAM_BOT_TOKEN:
+        return
+    existing_msg_id = await get_alert_message(user_id, alert_type)
+    async with httpx.AsyncClient(timeout=10) as client:
+        # удаляем старое если есть
+        if existing_msg_id:
+            try:
+                await client.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage",
+                    json={"chat_id": user_id, "message_id": existing_msg_id},
+                )
+            except Exception:
+                pass
+        # шлём новое
+        try:
+            r = await client.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={
+                    "chat_id": user_id,
+                    "text": text,
+                    "parse_mode": "Markdown",
+                    "reply_markup": markup,
+                },
+            )
+            data = r.json()
+            if data.get("ok"):
+                msg_id = data["result"]["message_id"]
+                await save_alert_message(user_id, alert_type, msg_id)
+                await set_user_blocked(user_id, False)
+            elif "blocked" in data.get("description", "").lower():
+                await set_user_blocked(user_id, True)
+                log.warning("user %s blocked the bot", user_id)
+        except Exception:
+            pass
+
+
 async def check_feeding_alert():
-    last = get_last_feeding_cached()
+    last = await get_last_feeding_db()
     if last is None:
         return
-    days = (datetime.now() - last).days
-    if days >= FEEDING_ALERT_DAYS:
-        await _send_alert(f"🍎 Геккон не кормлен *{days}* дней!")
+    days = (datetime.now().date() - last.date()).days
+    if days < FEEDING_ALERT_DAYS:
+        return
+    supplements = await get_next_feeding_supplements()
+    text = f"🍎 *Пора кормить геккона!* (не ел *{days} д.*)"
+    if "vitamins" in supplements:
+        text += "\n💊 Это кормление *с витаминами*"
+    if "hornworm" in supplements:
+        text += "\n🐛 Дать *табачного бражника*"
+    text += "\n🦗 Покорми сверчков сегодня — через 2 дня готовы"
+    markup = {"inline_keyboard": [[
+        {"text": "🍎 Покормил", "callback_data": "alert_fed"},
+        {"text": "🦗 Купил сверчков", "callback_data": "alert_cricket"},
+    ]]}
+    blocked = await get_blocked_user_ids()
+    for uid in TELEGRAM_SUPER_ADMINS - blocked:
+        await _send_or_edit_alert(uid, "feeding", text, markup)
+
+
+async def check_cricket_alert():
+    LIFESPAN = 6
+    bought_at, _ = await get_last_cricket_purchase()
+    if bought_at is None:
+        return
+    days_since = (datetime.now() - bought_at).days
+    if days_since < LIFESPAN - 1:
+        return
+    if days_since >= LIFESPAN - 1:
+        text = f"🔴 *Сверчки закончились!* (день {days_since + 1} из {LIFESPAN}) — купи новую партию"
+    else:
+        text = f"🟡 *Сверчки на исходе* (день {days_since + 1} из {LIFESPAN}) — скоро покупать"
+    markup = {"inline_keyboard": [[
+        {"text": "🦗 Купил сверчков", "callback_data": "alert_cricket"},
+    ]]}
+    blocked = await get_blocked_user_ids()
+    for uid in TELEGRAM_SUPER_ADMINS - blocked:
+        await _send_or_edit_alert(uid, "cricket", text, markup)
 
 
 def _is_lamp_on_now(hour: int, minute: int, duration_h: float) -> bool:
@@ -110,21 +188,47 @@ def _is_lamp_on_now(hour: int, minute: int, duration_h: float) -> bool:
     return now >= start or now < end
 
 
+def _remaining_seconds(hour: int, minute: int, duration_h: float) -> float:
+    """Сколько секунд осталось до конца окна горения лампы. 0 если окно закончилось."""
+    now = datetime.now()
+    start = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    end = start + timedelta(hours=duration_h)
+    if end.day != start.day and now < end:
+        # переход через полночь, сейчас ещё до конца
+        pass
+    remaining = (end - now).total_seconds()
+    return max(0.0, remaining)
+
+
+async def _lamp_off_after(lamp_type: str, seconds: float):
+    """Вспомогательная: ждёт seconds секунд и выключает лампу."""
+    log.info("recovery: will turn off %s in %.0fs", lamp_type, seconds)
+    await asyncio.sleep(seconds)
+    await asyncio.to_thread(tuya.switch_lamp, lamp_type, False)
+    await log_lamp_event(lamp_type, "off", "scheduler:recovery")
+    log.info("recovery: turned off %s", lamp_type)
+
+
 async def _recover_lamps(schedules: list[dict]):
-    """При старте выключает лампы которые должны быть выключены."""
-    lamps_should_be_on: dict[str, bool] = {}
+    """При старте выключает лампы вне окна; для ламп внутри окна планирует выключение."""
+    lamps_in_window: dict[str, float] = {}  # lamp_type → remaining_seconds
     for s in schedules:
         if s.get("paused"):
             continue
         if _is_lamp_on_now(s["hour"], s["minute"], s["duration_h"]):
-            lamps_should_be_on[s["lamp_type"]] = True
+            remaining = _remaining_seconds(s["hour"], s["minute"], s["duration_h"])
+            lamps_in_window[s["lamp_type"]] = remaining
 
     for lamp in ("uv", "heat"):
         status = tuya.get_lamp_status(lamp)
-        if status.get("switch") is True and not lamps_should_be_on.get(lamp):
-            print(f"[Scheduler] recovery: turning off {lamp} lamp (outside schedule window)")
+        if status.get("switch") is True and lamp not in lamps_in_window:
+            log.info("recovery: turning off %s lamp (outside schedule window)", lamp)
             tuya.switch_lamp(lamp, False)
             await log_lamp_event(lamp, "off", "scheduler:recovery")
+        elif lamp in lamps_in_window:
+            remaining = lamps_in_window[lamp]
+            log.info("recovery: %s lamp is in window, scheduling off in %.0fs", lamp, remaining)
+            asyncio.create_task(_lamp_off_after(lamp, remaining))
 
 
 async def load_schedules():
@@ -149,14 +253,26 @@ async def load_schedules():
     scheduler.add_job(record_sensor_readings, "interval", minutes=30, id="sensor_readings")
     scheduler.add_job(update_gecko_state, "interval", minutes=2, id="gecko_state")
     scheduler.add_job(backup_db, "cron", hour=3, minute=0, id="db_backup")
-    scheduler.add_job(check_feeding_alert, "cron", hour=12, minute=0, id="feeding_alert")
+    scheduler.add_job(check_feeding_alert, "cron", hour=20, minute=0, id="feeding_alert")
+    scheduler.add_job(check_feeding_alert, "interval", hours=6, id="feeding_alert_interval")
+    scheduler.add_job(check_cricket_alert, "cron", hour=18, minute=0, id="cricket_alert")
+    scheduler.add_job(check_cricket_alert, "interval", hours=6, id="cricket_alert_interval")
     scheduler.add_job(purge_old_photos, "interval", minutes=30, id="purge_photos")
-    scheduler.add_job(capture_timelapse_frame, "interval", minutes=2, id="timelapse_capture")
+    scheduler.add_job(purge_lamp_events, "interval", hours=12, id="purge_lamp_events")
+    scheduler.add_job(capture_timelapse_frame, "interval", seconds=5, id="timelapse_capture")
     scheduler.add_job(generate_and_send_timelapse, "cron", hour=12, minute=0, id="timelapse_generate")
+    scheduler.add_job(generate_and_send_timelapse_preview, "cron", hour=0, minute=0, id="timelapse_preview")
+
+
+async def _startup_alert_check():
+    await asyncio.sleep(30)
+    await check_feeding_alert()
+    await check_cricket_alert()
 
 
 def start():
     scheduler.start()
+    asyncio.create_task(_startup_alert_check())
 
 
 def shutdown():

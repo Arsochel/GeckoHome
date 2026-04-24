@@ -25,8 +25,10 @@ async def root():
 
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request, user: str = Depends(get_current_user)):
-    temp = tuya.get_sensor("thermometer", "va_temperature") or "N/A"
-    hum  = tuya.get_sensor("humidifier",  "va_humidity")    or "N/A"
+    _temp = tuya.get_sensor("thermometer", "va_temperature")
+    _hum  = tuya.get_sensor("humidifier",  "va_humidity") or tuya.get_sensor("thermometer", "va_humidity")
+    temp = f"{_temp / 10:.1f}" if _temp is not None else "N/A"
+    hum  = str(_hum) if _hum is not None else "N/A"
 
     schedules = []
     for job in scheduler.get_jobs():

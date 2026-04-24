@@ -1,10 +1,16 @@
 import asyncio
 import json
+import logging
 import os
 import re
 import threading
 from datetime import datetime
 from contextlib import asynccontextmanager
+
+from logging_config import setup_logging
+setup_logging()
+
+log = logging.getLogger(__name__)
 
 import cv2
 
@@ -53,16 +59,16 @@ def _run_cloudflared():
                     url = m.group(0)
                     with open(_TUNNEL_URL_FILE, "w") as f:
                         f.write(url)
-                    print(f"[cloudflared] {url}")
+                    log.info("cloudflared tunnel: %s", url)
                     delay = 60
                     break
 
             proc.wait()
         except FileNotFoundError:
-            print("[cloudflared] not found, skipping")
+            log.warning("cloudflared not found, skipping tunnel")
             return
         except Exception as e:
-            print(f"[cloudflared] error: {e}")
+            log.error("cloudflared error: %s", e)
         time.sleep(delay)
         delay = min(delay * 2, 1800)
 
@@ -99,6 +105,7 @@ async def lifespan(_: FastAPI):
     await load_last_feeding()
     await load_schedules()
     start_scheduler()
+    tuya.start_listener()
     await motion_monitor.start()
     async def _initial_state_check():
         await asyncio.sleep(10)
@@ -108,11 +115,11 @@ async def lifespan(_: FastAPI):
         try:
             await camera.start_hls()
         except Exception as e:
-            print(f"Camera HLS failed: {e}")
+            log.error("Camera HLS failed: %s", e)
         try:
             await camera.start_mediamtx(MEDIAMTX_BIN)
         except Exception as e:
-            print(f"Camera mediamtx failed: {e}")
+            log.error("Camera mediamtx failed: %s", e)
     asyncio.create_task(_start_tunnel())
     yield
     stop_scheduler()
@@ -146,7 +153,7 @@ def _get_yolo():
     if _yolo_model is None and YOLO_MODEL_PATH and os.path.exists(YOLO_MODEL_PATH):
         from ultralytics import YOLO
         _yolo_model = YOLO(YOLO_MODEL_PATH)
-        print(f"[YOLO] model loaded: {YOLO_MODEL_PATH}")
+        log.info("YOLO model loaded: %s", YOLO_MODEL_PATH)
     return _yolo_model
 
 
@@ -197,7 +204,7 @@ async def stream_detect_mjpeg():
                 continue
             frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
             if model is not None:
-                results = await asyncio.to_thread(model, frame, verbose=False, conf=0.6)
+                results = await asyncio.to_thread(model, frame, verbose=False, conf=0.85)
                 results = results[0]
                 for box in results.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
@@ -263,7 +270,7 @@ async def stream_view(request: Request):
         except Exception:
             pass
     except Exception as e:
-        print(f"[Stream] view log error: {e}")
+        log.error("Stream view log error: %s", e)
     return {"ok": True}
 
 
@@ -271,7 +278,7 @@ async def stream_view(request: Request):
 @app.websocket("/ws/status")
 async def ws_status(websocket: WebSocket):
     await websocket.accept()
-    print("[WS] client connected")
+    log.debug("WS client connected")
     try:
         while True:
             uv, heat = await asyncio.gather(
@@ -282,7 +289,7 @@ async def ws_status(websocket: WebSocket):
             await asyncio.sleep(5)
     except Exception:
         pass
-    print("[WS] client disconnected")
+    log.debug("WS client disconnected")
 
 
 @app.get("/hls/{filename}")
@@ -311,4 +318,9 @@ async def motion_debug(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("SERVER_PORT", "8000")))
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=int(os.getenv("SERVER_PORT", "8000")),
+        log_config=None,  # не перезаписывать наш logging setup
+    )

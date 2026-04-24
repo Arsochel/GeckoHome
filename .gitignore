@@ -11,5 +11,15 @@ devices.json
 *.mp3
 .claude/
 tunnel_url.txt
+tunnel.pid
 backups/
 timelapse/
+bin/
+mediamtx/
+runs/
+*.pt
+.playwright-mcp/
+build_dataset_timelapse.py
+convert_dataset.py
+timelapse_debug.py
+docs/

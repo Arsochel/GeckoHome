@@ -114,7 +114,7 @@ async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
                 callback_data="heat_on" if not heat_on else "heat_off",
             )],
             *_camera_rows(lang, super_admin=True),
-            [InlineKeyboardButton("🍎 Fed", callback_data="fed")],
+            [InlineKeyboardButton("🍎 Feeding", callback_data="feeding_menu")],
             [InlineKeyboardButton("📋 Schedules", callback_data="schedules")],
             [InlineKeyboardButton(admin_label, callback_data="admin")],
             [await _lang_button(user_id)],
@@ -131,10 +131,45 @@ async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
                 callback_data="heat_on" if not heat_on else "heat_off",
             )],
             *_camera_rows(lang, super_admin=True),
-            [InlineKeyboardButton("🍎 Покормил", callback_data="fed")],
+            [InlineKeyboardButton("🍎 Питание", callback_data="feeding_menu")],
             [InlineKeyboardButton("📋 Расписания", callback_data="schedules")],
             [InlineKeyboardButton(admin_label, callback_data="admin")],
             [await _lang_button(user_id)],
+        ]
+    return InlineKeyboardMarkup(rows)
+
+
+def cricket_count_keyboard(lang: str = "ru", prefix: str = "fed_count_", back: str = "feeding_menu") -> InlineKeyboardMarkup:
+    counts = [3, 4, 5, 6]
+    buttons = [InlineKeyboardButton(f"{n}🦗", callback_data=f"{prefix}{n}") for n in counts]
+    back_label = "◀ Back" if lang == "en" else "◀ Назад"
+    return InlineKeyboardMarkup([buttons, [InlineKeyboardButton(back_label, callback_data=back)]])
+
+
+async def feeding_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
+    if lang == "en":
+        rows = [
+            [InlineKeyboardButton("🍎 Fed", callback_data="fed")],
+            [InlineKeyboardButton("🐛 Hornworm", callback_data="fed_hornworm"),
+             InlineKeyboardButton("💊 Vitamins", callback_data="fed_vitamins")],
+            [InlineKeyboardButton("🦗 Crickets bought", callback_data="cricket_bought"),
+             InlineKeyboardButton("🦗 Ran out", callback_data="cricket_out")],
+            [InlineKeyboardButton("🥦 Feed crickets", callback_data="cricket_feed")],
+            [InlineKeyboardButton("📅 Calendar", callback_data="calendar")],
+            [InlineKeyboardButton("📋 Feeding history", callback_data="feeding_history")],
+            [InlineKeyboardButton("◀ Back", callback_data="back_main")],
+        ]
+    else:
+        rows = [
+            [InlineKeyboardButton("🍎 Покормил", callback_data="fed")],
+            [InlineKeyboardButton("🐛 Бражник", callback_data="fed_hornworm"),
+             InlineKeyboardButton("💊 Витамины", callback_data="fed_vitamins")],
+            [InlineKeyboardButton("🦗 Купил сверчков", callback_data="cricket_bought"),
+             InlineKeyboardButton("🦗 Закончились", callback_data="cricket_out")],
+            [InlineKeyboardButton("🥦 Покормить сверчков", callback_data="cricket_feed")],
+            [InlineKeyboardButton("📅 Календарь", callback_data="calendar")],
+            [InlineKeyboardButton("📋 История кормления", callback_data="feeding_history")],
+            [InlineKeyboardButton("◀ Назад", callback_data="back_main")],
         ]
     return InlineKeyboardMarkup(rows)
 

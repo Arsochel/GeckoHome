@@ -1,3 +1,4 @@
+import logging
 import secrets
 
 import bcrypt
@@ -7,6 +8,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from config import ADMIN_USERNAME, ADMIN_PASSWORD_HASH
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
@@ -41,7 +44,16 @@ async def login_page(request: Request):
 
 @router.post("/login")
 async def login(request: Request, username: str = Form(...), password: str = Form(...)):
-    if username == ADMIN_USERNAME and ADMIN_PASSWORD_HASH and bcrypt.checkpw(password.encode(), ADMIN_PASSWORD_HASH.encode()):
+    try:
+        ok = (
+            username == ADMIN_USERNAME
+            and bool(ADMIN_PASSWORD_HASH)
+            and bcrypt.checkpw(password.encode(), ADMIN_PASSWORD_HASH.encode())
+        )
+    except Exception as e:
+        log.error("bcrypt.checkpw failed: %s", e)
+        return templates.TemplateResponse("login.html", {"request": request, "error": f"Auth error: {e}"})
+    if ok:
         request.session["user"] = username
         return RedirectResponse(url="/admin", status_code=303)
     return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid credentials"})

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -7,16 +8,18 @@ import threading
 import time
 from datetime import datetime
 
+log = logging.getLogger(__name__)
+
 os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "-8"
 os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 import cv2
 import httpx
 
 from config import (
-    CAMERA_RTSP_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS, YOLO_MODEL_PATH,
+    CAMERA_RTSP_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS, TELEGRAM_ADMINS, YOLO_MODEL_PATH,
     MOTION_THRESHOLD, MOTION_MIN_AREA, MOTION_TIMEOUT, MOTION_DEBUG,
 )
-from database import save_photo, add_motion_event, set_gecko_state, log_gecko_zone, update_motion_photo, DB_PATH
+from database import save_photo, add_motion_event, set_gecko_state, log_gecko_zone, update_motion_photo, DB_PATH, get_blocked_user_ids
 from services.zones import detect_zone, ZONE_W, ZONE_H
 
 _last_motion_time: datetime | None = None
@@ -44,7 +47,9 @@ def _tg_url(method: str) -> str:
 
 async def _send_photo_with_approval(photo_bytes: bytes, caption: str) -> str | None:
     """Send photo to super admin with Опубликовать/Пропустить buttons. Returns photo_file_id."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_SUPER_ADMINS:
+    blocked = await get_blocked_user_ids()
+    _motion_recipients = (TELEGRAM_SUPER_ADMINS | TELEGRAM_ADMINS) - blocked
+    if not TELEGRAM_BOT_TOKEN or not _motion_recipients:
         return None
     event_id = await add_motion_event("", caption)
     keyboard = json.dumps({"inline_keyboard": [[
@@ -52,7 +57,7 @@ async def _send_photo_with_approval(photo_bytes: bytes, caption: str) -> str | N
         {"text": "❌ Пропустить",   "callback_data": f"motion_skip_{event_id}"},
     ]]})
     file_id = None
-    for admin_id in TELEGRAM_SUPER_ADMINS:
+    for admin_id in _motion_recipients:
         try:
             async with httpx.AsyncClient(timeout=60) as client:
                 resp = await client.post(
@@ -65,16 +70,18 @@ async def _send_photo_with_approval(photo_bytes: bytes, caption: str) -> str | N
             if data.get("ok") and file_id is None:
                 file_id = data["result"]["photo"][-1]["file_id"]
                 await update_motion_photo(event_id, file_id)
-                print(f"[Motion] photo sent, event_id={event_id}")
+                log.info("photo sent, event_id=%s", event_id)
         except Exception as e:
-            print(f"[Motion] photo send error: {e}")
+            log.error("photo send error: %s", e)
     return file_id
 
 
 async def _send_telegram_video(video_path: str, caption: str):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_SUPER_ADMINS:
+    blocked = await get_blocked_user_ids()
+    _motion_recipients = (TELEGRAM_SUPER_ADMINS | TELEGRAM_ADMINS) - blocked
+    if not TELEGRAM_BOT_TOKEN or not _motion_recipients:
         return
-    for admin_id in TELEGRAM_SUPER_ADMINS:
+    for admin_id in _motion_recipients:
         try:
             async with httpx.AsyncClient(timeout=90) as client:
                 with open(video_path, "rb") as f:
@@ -83,9 +90,9 @@ async def _send_telegram_video(video_path: str, caption: str):
                         data={"chat_id": admin_id, "caption": caption},
                         files={"video": ("motion.mp4", f, "video/mp4")},
                     )
-            print("[Motion] video sent to Telegram")
+            log.info("video sent to Telegram")
         except Exception as e:
-            print(f"[Motion] Telegram send error: {e}")
+            log.error("Telegram send error: %s", e)
 
 
 def _compile_video_sync(snapshot_paths: list[str]) -> str | None:
@@ -119,7 +126,7 @@ def _compile_video_sync(snapshot_paths: list[str]) -> str | None:
 
     if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
         return out_path
-    print(f"[Motion] ffmpeg error: {result.stderr.decode()[-300:]}")
+    log.error("ffmpeg error:\n%s", result.stderr.decode()[-300:])
     try:
         os.unlink(out_path)
     except Exception:
@@ -135,7 +142,7 @@ def _get_yolo():
     if _yolo_model is None and YOLO_MODEL_PATH and os.path.exists(YOLO_MODEL_PATH):
         from ultralytics import YOLO
         _yolo_model = YOLO(YOLO_MODEL_PATH)
-        print(f"[Motion] YOLO loaded: {YOLO_MODEL_PATH}")
+        log.info("YOLO loaded: %s", YOLO_MODEL_PATH)
     return _yolo_model
 
 
@@ -151,17 +158,20 @@ class MotionMonitor:
 
     async def start(self):
         if not CAMERA_RTSP_URL:
-            print("[Motion] no CAMERA_RTSP_URL, skipping")
+            log.warning("no CAMERA_RTSP_URL, skipping motion monitor")
             return
         self._stop_event.clear()
         self._loop = asyncio.get_running_loop()
+        # прогреваем YOLO заранее, чтобы не тормозило при первом движении
+        if YOLO_MODEL_PATH:
+            await asyncio.to_thread(_get_yolo)
         t = threading.Thread(target=self._thread_loop, daemon=True)
         t.start()
-        print("[Motion] monitor started")
+        log.info("monitor started")
 
     async def stop(self):
         self._stop_event.set()
-        print("[Motion] monitor stopped")
+        log.info("monitor stopped")
 
     def _thread_loop(self):
         while not self._stop_event.is_set():
@@ -169,7 +179,7 @@ class MotionMonitor:
                 self._run_sync()
             except Exception as e:
                 if not self._stop_event.is_set():
-                    print(f"[Motion] loop error: {e}, retry in 15s")
+                    log.error("loop error: %s, retry in 15s", e)
                     self._stop_event.wait(15)
 
     def _run_sync(self):
@@ -192,12 +202,15 @@ class MotionMonitor:
         cap_thread = threading.Thread(target=_capture_loop, daemon=True)
         cap_thread.start()
 
-        prev_gray      = None
+        bg_sub = cv2.createBackgroundSubtractorMOG2(
+            history=200, varThreshold=MOTION_THRESHOLD, detectShadows=False
+        )
         motion_active  = False
         last_motion_t  = 0.0
         last_snap_t    = 0.0
         last_yolo_t    = 0.0
         snapshots: list[str] = []
+        warmup_frames  = 0
 
         try:
             while not self._stop_event.is_set():
@@ -208,28 +221,32 @@ class MotionMonitor:
                 latest_frame[0] = None
 
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                gray = cv2.GaussianBlur(gray, (21, 21), 0)
+                gray = cv2.GaussianBlur(gray, (11, 11), 0)
 
-                if prev_gray is None:
-                    prev_gray = gray
-                    continue
+                fg_mask = bg_sub.apply(gray)
 
-                diff = cv2.absdiff(prev_gray, gray)
                 # маскируем timestamp камеры (нижний левый угол)
-                h, w = diff.shape
-                diff[int(h * 0.88):, :int(w * 0.35)] = 0
-                _, thresh = cv2.threshold(diff, MOTION_THRESHOLD, 255, cv2.THRESH_BINARY)
+                h, w = fg_mask.shape
+                fg_mask[int(h * 0.88):, :int(w * 0.35)] = 0
+
+                # морфология: убираем шум
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel)
+
                 contours, _ = cv2.findContours(
-                    thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                    fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
                 )
                 big_contours = [c for c in contours if cv2.contourArea(c) > MOTION_MIN_AREA]
-                motion = len(big_contours) > 0
+
+                # MOG2 нужно ~30 кадров чтобы выучить фон — в этот период не детектим
+                warmup_frames += 1
+                motion = len(big_contours) > 0 and warmup_frames > 30
 
                 if MOTION_DEBUG:
                     debug = frame.copy()
                     cv2.drawContours(debug, big_contours, -1, (0, 255, 0), 2)
                     max_area = int(max((cv2.contourArea(c) for c in contours), default=0))
-                    label = f"MOTION area={int(max((cv2.contourArea(c) for c in big_contours), default=0))}" if motion else f"quiet max={max_area}"
+                    label = f"MOTION area={int(max((cv2.contourArea(c) for c in big_contours), default=0))}" if motion else f"quiet max={max_area} {'(warmup)' if warmup_frames <= 30 else ''}"
                     cv2.putText(debug, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0) if motion else (100, 100, 100), 2)
                     cv2.imwrite(_DEBUG_FRAME_PATH, debug)
 
@@ -242,7 +259,7 @@ class MotionMonitor:
                         global _last_motion_time
                         with _motion_lock:
                             _last_motion_time = datetime.now()
-                        print("\033[92m[Motion] started\033[0m")
+                        log.info("motion started")
                         asyncio.run_coroutine_threadsafe(
                             set_gecko_state("roaming"), self._loop
                         )
@@ -259,13 +276,13 @@ class MotionMonitor:
                         cv2.imwrite(path, frame)
                         snapshots.append(path)
                         last_snap_t = now
-                        print(f"[Motion] snap #{len(snapshots)}")
+                        log.debug("snap #%d", len(snapshots))
 
                 elif motion_active and (now - last_motion_t) >= MOTION_TIMEOUT:
                     motion_active = False
                     captured = snapshots[:]
                     snapshots = []
-                    print(f"\033[93m[Motion] ended — {len(captured)} frames\033[0m")
+                    log.info("motion ended — %d frames", len(captured))
 
                     if len(captured) >= MIN_FRAMES:
                         asyncio.run_coroutine_threadsafe(
@@ -297,9 +314,8 @@ class MotionMonitor:
                                     log_gecko_zone(zone, conf), self._loop
                                 )
                         except Exception as e:
-                            print(f"[Motion] YOLO error: {e}")
+                            log.error("YOLO error: %s", e)
 
-                prev_gray = gray
                 if self._stop_event.wait(0.3):
                     break
 
@@ -310,7 +326,7 @@ class MotionMonitor:
         """Записывает 30-секундный клип при срабатывании и отправляет суперадмину."""
         try:
             from services.camera import clip as camera_clip
-            print("[Motion] recording 30s clip...")
+            log.info("recording 30s clip...")
             video_path = await camera_clip(30)
             if video_path:
                 await _send_telegram_video(video_path, "🦎 Движение!")
@@ -319,9 +335,9 @@ class MotionMonitor:
                 except Exception:
                     pass
             else:
-                print("[Motion] clip failed")
+                log.warning("clip failed")
         except Exception as e:
-            print(f"[Motion] record error: {e}")
+            log.error("record error: %s", e)
 
     async def _process(self, snapshot_paths: list[str]):
         """Сохраняет кадры в датасет и галерею."""
@@ -336,7 +352,7 @@ class MotionMonitor:
 
 
         except Exception as e:
-            print(f"[Motion] process error: {e}")
+            log.error("process error: %s", e)
         finally:
             for p in snapshot_paths:
                 try:

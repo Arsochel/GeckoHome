@@ -20,6 +20,11 @@ TELEGRAM_SUPER_ADMINS: set[int] = {
     int(x) for x in os.getenv("TELEGRAM_SUPER_ADMIN", "0").replace(",", " ").split()
     if x.strip().isdigit() and int(x) != 0
 }
+TELEGRAM_ADMINS: set[int] = {
+    int(x) for x in os.getenv("TELEGRAM_ADMIN", "").replace(",", " ").split()
+    if x.strip().isdigit()
+}
+TIMELAPSE_OWNER_ID: int = int(next(iter(TELEGRAM_SUPER_ADMINS), 0))
 
 CAMERA_RTSP_URL = os.getenv("CAMERA_RTSP_URL", "")
 MEDIAMTX_BIN = os.getenv("MEDIAMTX_BIN", "mediamtx")
@@ -40,7 +45,12 @@ HUM_ALERT_MIN  = float(os.getenv("HUM_ALERT_MIN", "30"))
 HUM_ALERT_MAX  = float(os.getenv("HUM_ALERT_MAX", "60"))
 
 # Feeding alert
-FEEDING_ALERT_DAYS = int(os.getenv("FEEDING_ALERT_DAYS", "3"))
+FEEDING_ALERT_DAYS = int(os.getenv("FEEDING_ALERT_DAYS", "2"))
+
+# Tuya Cloud API (для батарейных устройств без локального LAN)
+TUYA_CLOUD_KEY    = os.getenv("TUYA_CLOUD_KEY", "")
+TUYA_CLOUD_SECRET = os.getenv("TUYA_CLOUD_SECRET", "")
+TUYA_CLOUD_REGION = os.getenv("TUYA_CLOUD_REGION", "eu")
 
 # tinytuya local keys (optional, enables local LAN control without cloud)
 DEVICE_LOCAL = {

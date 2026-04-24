@@ -1,9 +1,12 @@
 import asyncio
+import logging
 import os
 import subprocess
 import tempfile
 
 from config import CAMERA_RTSP_URL
+
+log = logging.getLogger(__name__)
 
 HLS_DIR = os.path.join(tempfile.gettempdir(), "gecko_hls")
 MEDIAMTX_CONFIG_PATH = os.path.join(tempfile.gettempdir(), "gecko_mediamtx.yml")
@@ -66,9 +69,9 @@ async def snapshot() -> str | None:
         ], 15)
         if os.path.exists(path) and os.path.getsize(path) > 0:
             return path
-        print(f"[Camera] Snapshot failed:\n{result.stderr.decode()[-500:]}")
+        log.error("Snapshot failed:\n%s", result.stderr.decode()[-500:])
     except Exception as e:
-        print(f"[Camera] Snapshot error: {e}")
+        log.error("Snapshot error: %s", e)
     try:
         os.unlink(path)
     except OSError:
@@ -95,9 +98,9 @@ async def clip(duration: int = 30) -> str | None:
         ], duration + 40)
         if result.returncode == 0 and os.path.exists(path) and os.path.getsize(path) > 0:
             return path
-        print(f"[Camera] Clip failed:\n{result.stderr.decode()[-500:]}")
+        log.error("Clip failed:\n%s", result.stderr.decode()[-500:])
     except Exception as e:
-        print(f"[Camera] Clip error: {e}")
+        log.error("Clip error: %s", e)
     try:
         os.unlink(path)
     except OSError:
@@ -131,7 +134,7 @@ async def start_hls():
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    print(f"[Camera] HLS stream started, PID={_hls_proc.pid}")
+    log.info("HLS stream started, PID=%s", _hls_proc.pid)
 
 
 async def stop_hls():
@@ -143,7 +146,7 @@ async def stop_hls():
         except Exception:
             pass
         _hls_proc = None
-        print("[Camera] HLS stream stopped")
+        log.info("HLS stream stopped")
 
 
 def hls_ready() -> bool:
@@ -184,7 +187,7 @@ async def start_mediamtx(bin_path: str):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    print(f"[Camera] mediamtx started, PID={_mediamtx_proc.pid}")
+    log.info("mediamtx started, PID=%s", _mediamtx_proc.pid)
 
 
 async def stop_mediamtx():
@@ -199,7 +202,7 @@ async def stop_mediamtx():
             except Exception:
                 pass
         _mediamtx_proc = None
-        print("[Camera] mediamtx stopped")
+        log.info("mediamtx stopped")
 
 
 def mediamtx_ready() -> bool:
