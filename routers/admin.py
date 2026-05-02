@@ -32,9 +32,11 @@ async def admin_page(request: Request, user: str = Depends(get_current_user)):
 
     schedules = []
     for job in scheduler.get_jobs():
+        kw = job.kwargs or {}
+        if "lamp_type" not in kw:
+            continue
         if not hasattr(job.trigger, "fields"):
             continue
-        kw     = job.kwargs or {}
         hour   = next((str(f) for f in job.trigger.fields if f.name == "hour"),   "?")
         minute = next((str(f) for f in job.trigger.fields if f.name == "minute"), "?")
         schedules.append({

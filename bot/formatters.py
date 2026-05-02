@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 
 from services import tuya
-from database import get_last_feeding_cached, get_gecko_state, get_gecko_zone, get_last_cricket_purchase, get_next_feeding_supplements
+from database import get_last_feeding_cached, get_gecko_state, get_gecko_zone, get_next_feeding_supplements, get_cricket_remaining
 
 _ZONE_LABELS = {
     "ru": {
@@ -112,14 +112,12 @@ async def _alert_block(lang: str) -> str:
                     line += " · 🐛 бражник"
             lines.append(line)
 
-    bought_at, _ = await get_last_cricket_purchase()
-    if bought_at is not None:
-        days_since = (datetime.now() - bought_at).days
-        if days_since >= 5:
-            if lang == "en":
-                lines.append("🦗 *Crickets running out* — buy a new batch soon")
-            else:
-                lines.append("🦗 *Сверчки заканчиваются* — скоро покупать")
+    remaining = await get_cricket_remaining()
+    if remaining is not None and remaining <= 5:
+        if remaining == 0:
+            lines.append("🦗 *Сверчки закончились* — купи новую партию" if lang == "ru" else "🦗 *Crickets ran out* — buy a new batch")
+        else:
+            lines.append(f"🦗 *Сверчков осталось: {remaining} шт.* — скоро покупать" if lang == "ru" else f"🦗 *Crickets left: {remaining}* — buy soon")
 
     if not lines:
         return ""

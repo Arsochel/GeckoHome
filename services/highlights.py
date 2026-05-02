@@ -9,7 +9,7 @@ log = logging.getLogger(__name__)
 _SLEEP_THRESHOLD_MIN = 3  # минут без движения → считаем что спит
 
 
-async def update_gecko_state(force: bool = False):
+async def update_gecko_state():
     from services.motion import get_last_motion_time
     last_motion = get_last_motion_time()
     if last_motion is None:

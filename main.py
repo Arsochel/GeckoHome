@@ -2,13 +2,11 @@ import asyncio
 import json
 import logging
 import os
-import re
-import threading
 from datetime import datetime
 from contextlib import asynccontextmanager
 
 from logging_config import setup_logging
-setup_logging()
+setup_logging(enable_debug_buffer=True)
 
 log = logging.getLogger(__name__)
 
@@ -18,85 +16,13 @@ from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from config import SECRET_KEY, MEDIAMTX_BIN, YOLO_MODEL_PATH
+from config import SECRET_KEY, MEDIAMTX_BIN
 from database import init_db, load_last_feeding
-from services import tuya, camera
+from services import tuya, camera, tunnel
 from services.scheduler import load_schedules, start as start_scheduler, shutdown as stop_scheduler
 from services.motion import monitor as motion_monitor
 from services.highlights import update_gecko_state
-from routers import auth, admin, devices, schedules
-
-
-_TUNNEL_URL_FILE = os.path.join(os.path.dirname(__file__), "tunnel_url.txt")
-_TUNNEL_PID_FILE = os.path.join(os.path.dirname(__file__), "tunnel.pid")
-
-
-def _run_cloudflared():
-    import subprocess
-    import time
-
-    port  = os.getenv("SERVER_PORT", "8000")
-    delay = 60
-
-    while True:
-        try:
-            try:
-                os.remove(_TUNNEL_URL_FILE)
-            except OSError:
-                pass
-            proc = subprocess.Popen(
-                ["cloudflared", "tunnel", "--url", f"http://localhost:{port}"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            )
-
-            with open(_TUNNEL_PID_FILE, "w") as f:
-                f.write(str(proc.pid))
-
-            for line in proc.stderr:
-                line = line.decode(errors="ignore").strip()
-                m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
-                if m:
-                    url = m.group(0)
-                    with open(_TUNNEL_URL_FILE, "w") as f:
-                        f.write(url)
-                    log.info("cloudflared tunnel: %s", url)
-                    delay = 60
-                    break
-
-            proc.wait()
-        except FileNotFoundError:
-            log.warning("cloudflared not found, skipping tunnel")
-            return
-        except Exception as e:
-            log.error("cloudflared error: %s", e)
-        time.sleep(delay)
-        delay = min(delay * 2, 1800)
-
-
-async def _start_tunnel():
-    t = threading.Thread(target=_run_cloudflared, daemon=True)
-    t.start()
-
-
-def restart_tunnel():
-    """Убивает cloudflared и запускает новый. Вызывается из бота."""
-    import subprocess
-    try:
-        with open(_TUNNEL_PID_FILE) as f:
-            pid = int(f.read().strip())
-        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
-    except Exception:
-        pass
-    try:
-        os.remove(_TUNNEL_URL_FILE)
-    except OSError:
-        pass
-    try:
-        os.remove(_TUNNEL_PID_FILE)
-    except OSError:
-        pass
-    t = threading.Thread(target=_run_cloudflared, daemon=True)
-    t.start()
+from routers import auth, admin, devices, schedules, debug
 
 
 @asynccontextmanager
@@ -109,7 +35,7 @@ async def lifespan(_: FastAPI):
     await motion_monitor.start()
     async def _initial_state_check():
         await asyncio.sleep(10)
-        await update_gecko_state(force=True)
+        await update_gecko_state()
     asyncio.create_task(_initial_state_check())
     if camera.is_configured():
         try:
@@ -120,7 +46,8 @@ async def lifespan(_: FastAPI):
             await camera.start_mediamtx(MEDIAMTX_BIN)
         except Exception as e:
             log.error("Camera mediamtx failed: %s", e)
-    asyncio.create_task(_start_tunnel())
+        log.info("camera ready")
+    asyncio.create_task(tunnel.start())
     yield
     stop_scheduler()
     await motion_monitor.stop()
@@ -136,6 +63,7 @@ app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(devices.router)
 app.include_router(schedules.router)
+app.include_router(debug.router)
 
 import httpx as _httpx
 from fastapi import Request, HTTPException
@@ -146,17 +74,6 @@ os.makedirs(camera.HLS_DIR, exist_ok=True)
 _templates = Jinja2Templates(directory="templates")
 
 
-_yolo_model = None
-
-def _get_yolo():
-    global _yolo_model
-    if _yolo_model is None and YOLO_MODEL_PATH and os.path.exists(YOLO_MODEL_PATH):
-        from ultralytics import YOLO
-        _yolo_model = YOLO(YOLO_MODEL_PATH)
-        log.info("YOLO model loaded: %s", YOLO_MODEL_PATH)
-    return _yolo_model
-
-
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     return FileResponse("static/favicon.ico", media_type="image/x-icon")
@@ -165,11 +82,6 @@ async def favicon():
 @app.get("/stream", response_class=HTMLResponse)
 async def stream_page(request: Request):
     return _templates.TemplateResponse("stream.html", {"request": request})
-
-
-@app.get("/stream/detect", response_class=HTMLResponse)
-async def stream_detect_page(request: Request):
-    return _templates.TemplateResponse("stream_detect.html", {"request": request})
 
 
 @app.get("/api/stream/live.mjpeg")
@@ -190,89 +102,6 @@ async def stream_live_mjpeg():
         _generate(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
-
-
-@app.get("/api/stream/detect.mjpeg")
-async def stream_detect_mjpeg():
-
-    async def _generate():
-        model = _get_yolo()
-        while True:
-            frame = motion_monitor.get_latest_frame()
-            if frame is None:
-                await asyncio.sleep(0.1)
-                continue
-            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
-            if model is not None:
-                results = await asyncio.to_thread(model, frame, verbose=False, conf=0.85)
-                results = results[0]
-                for box in results.boxes:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    conf = float(box.conf[0])
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    cv2.putText(frame, f"{conf:.2f}", (x1, y1 - 6),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
-            await asyncio.sleep(0.033)
-
-    return StreamingResponse(
-        _generate(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-    )
-
-
-def _verify_telegram_init_data(init_data: str) -> bool:
-    """Verify Telegram WebApp initData HMAC signature."""
-    import hmac, hashlib, urllib.parse
-    params = dict(urllib.parse.parse_qsl(init_data))
-    received_hash = params.pop("hash", "")
-    if not received_hash:
-        return False
-    data_check = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
-    from config import TELEGRAM_BOT_TOKEN
-    secret = hmac.new(b"WebAppData", TELEGRAM_BOT_TOKEN.encode(), hashlib.sha256).digest()
-    computed = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(computed, received_hash)
-
-
-@app.post("/api/stream/view")
-async def stream_view(request: Request):
-    """Логирует кто открыл стрим через Telegram WebApp."""
-    import urllib.parse
-    body = await request.json()
-    init_data = body.get("initData", "")
-    if not init_data:
-        return {"ok": False}
-    if not _verify_telegram_init_data(init_data):
-        return {"ok": False}
-    try:
-        params = dict(urllib.parse.parse_qsl(init_data, strict_parsing=True))
-        user_str = params.get("user", "{}")
-        user = json.loads(user_str)
-        name = " ".join(filter(None, [user.get("first_name"), user.get("last_name")]))
-        username = user.get("username", "")
-        uid = user.get("id", "?")
-        msg = f"[Bot] [{datetime.now().strftime('%H:%M:%S')}] Stream opened by @{username or name} ({uid})"
-        try:
-            async with _httpx.AsyncClient() as c:
-                await c.post(
-                    "http://127.0.0.1:8765",
-                    content=json.dumps({"msg": msg}).encode(),
-                    headers={"Content-Type": "application/json"},
-                    timeout=1,
-                )
-        except Exception:
-            pass
-        try:
-            from database import log_user_action
-            await log_user_action(int(uid), username or name, "stream")
-        except Exception:
-            pass
-    except Exception as e:
-        log.error("Stream view log error: %s", e)
-    return {"ok": True}
-
 
 
 @app.websocket("/ws/status")
@@ -303,17 +132,6 @@ async def serve_hls(filename: str):
     if filename.endswith(".m3u8"):
         return FileResponse(path, media_type="application/vnd.apple.mpegurl")
     return FileResponse(path, media_type="video/mp2t")
-
-
-@app.get("/api/motion/debug")
-async def motion_debug(request: Request):
-    user = request.session.get("user")
-    if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    from services.motion import _DEBUG_FRAME_PATH
-    if not os.path.exists(_DEBUG_FRAME_PATH):
-        raise HTTPException(status_code=404, detail="No debug frame yet")
-    return FileResponse(_DEBUG_FRAME_PATH, media_type="image/jpeg")
 
 
 if __name__ == "__main__":

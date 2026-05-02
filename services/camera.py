@@ -54,8 +54,8 @@ async def snapshot() -> str | None:
             _cv2.imwrite(path, frame)
             if os.path.getsize(path) > 0:
                 return path
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("monitor frame fetch: %s", e)
 
     fd, path = tempfile.mkstemp(suffix=".jpg", prefix="gecko_snap_")
     os.close(fd)
@@ -143,8 +143,8 @@ async def stop_hls():
         try:
             _hls_proc.terminate()
             _hls_proc.wait(timeout=1)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("hls terminate: %s", e)
         _hls_proc = None
         log.info("HLS stream stopped")
 
@@ -196,11 +196,12 @@ async def stop_mediamtx():
         try:
             _mediamtx_proc.terminate()
             _mediamtx_proc.wait(timeout=3)
-        except Exception:
+        except Exception as e:
+            log.debug("mediamtx terminate: %s", e)
             try:
                 _mediamtx_proc.kill()
-            except Exception:
-                pass
+            except Exception as e2:
+                log.debug("mediamtx kill: %s", e2)
         _mediamtx_proc = None
         log.info("mediamtx stopped")
 

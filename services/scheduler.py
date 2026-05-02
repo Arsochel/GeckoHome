@@ -14,7 +14,7 @@ import httpx
 from services import tuya
 from services.highlights import update_gecko_state
 from services.timelapse import capture_timelapse_frame, generate_and_send_timelapse, generate_and_send_timelapse_preview
-from database import get_schedules, save_schedule, log_lamp_event, log_sensor_reading, get_last_feeding_cached, purge_old_photos, purge_lamp_events, get_next_feeding_supplements, get_last_cricket_purchase, get_alert_message, save_alert_message, set_user_blocked, get_blocked_user_ids, get_last_feeding_db
+from database import get_schedules, save_schedule, log_lamp_event, log_sensor_reading, get_last_feeding_cached, purge_old_photos, purge_lamp_events, get_next_feeding_supplements, get_last_cricket_purchase, get_alert_message, save_alert_message, delete_alert_message, set_user_blocked, get_blocked_user_ids, get_last_feeding_db, purge_expired_debug_tokens, get_gecko_birthday
 from config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS,
     TEMP_ALERT_MIN, TEMP_ALERT_MAX, HUM_ALERT_MIN, HUM_ALERT_MAX, FEEDING_ALERT_DAYS,
@@ -72,13 +72,14 @@ async def _send_alert(text: str):
                     f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
                     json={"chat_id": admin_id, "text": text, "parse_mode": "Markdown"},
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("alert send failed: %s", e)
 
 
 async def record_sensor_readings():
-    temp = tuya.get_sensor("thermometer", "va_temperature")
-    hum = tuya.get_sensor("humidifier", "va_humidity") or tuya.get_sensor("thermometer", "va_humidity")
+    temp = await asyncio.to_thread(tuya.get_sensor, "thermometer", "va_temperature")
+    hum = await asyncio.to_thread(tuya.get_sensor, "humidifier", "va_humidity") or \
+          await asyncio.to_thread(tuya.get_sensor, "thermometer", "va_humidity")
     await log_sensor_reading(temp, hum)
     # alerts
     alerts = []
@@ -109,8 +110,8 @@ async def _send_or_edit_alert(user_id: int, alert_type: str, text: str, markup: 
                     f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage",
                     json={"chat_id": user_id, "message_id": existing_msg_id},
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("delete old alert failed: %s", e)
         # шлём новое
         try:
             r = await client.post(
@@ -130,8 +131,8 @@ async def _send_or_edit_alert(user_id: int, alert_type: str, text: str, markup: 
             elif "blocked" in data.get("description", "").lower():
                 await set_user_blocked(user_id, True)
                 log.warning("user %s blocked the bot", user_id)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("alert send failed: %s", e)
 
 
 async def check_feeding_alert():
@@ -148,27 +149,86 @@ async def check_feeding_alert():
     if "hornworm" in supplements:
         text += "\n🐛 Дать *табачного бражника*"
     text += "\n🦗 Покорми сверчков сегодня — через 2 дня готовы"
-    markup = {"inline_keyboard": [[
+    row = [
         {"text": "🍎 Покормил", "callback_data": "alert_fed"},
         {"text": "🦗 Купил сверчков", "callback_data": "alert_cricket"},
-    ]]}
+    ]
+    if "hornworm" in supplements:
+        row.append({"text": "🐛 Дал бражника", "callback_data": "alert_hornworm"})
+    markup = {"inline_keyboard": [row]}
     blocked = await get_blocked_user_ids()
     for uid in TELEGRAM_SUPER_ADMINS - blocked:
         await _send_or_edit_alert(uid, "feeding", text, markup)
 
 
-async def check_cricket_alert():
-    LIFESPAN = 6
-    bought_at, _ = await get_last_cricket_purchase()
-    if bought_at is None:
+async def _delete_alert_for_all(alert_type: str):
+    """Удаляет алерт-сообщение у всех супер-админов если оно есть."""
+    if not TELEGRAM_BOT_TOKEN:
         return
-    days_since = (datetime.now() - bought_at).days
-    if days_since < LIFESPAN - 1:
+    for uid in TELEGRAM_SUPER_ADMINS:
+        msg_id = await get_alert_message(uid, alert_type)
+        if not msg_id:
+            continue
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage",
+                    json={"chat_id": uid, "message_id": msg_id},
+                )
+        except Exception as e:
+            log.debug("delete alert failed: %s", e)
+        await delete_alert_message(uid, alert_type)
+
+
+async def check_birthday():
+    birthday = await get_gecko_birthday()
+    if not birthday:
         return
-    if days_since >= LIFESPAN - 1:
-        text = f"🔴 *Сверчки закончились!* (день {days_since + 1} из {LIFESPAN}) — купи новую партию"
+    from datetime import date
+    bday = date.fromisoformat(birthday)
+    today = date.today()
+
+    # Полный день рождения
+    if today.month == bday.month and today.day == bday.day:
+        age = today.year - bday.year
+        text = f"🎂 *С днём рождения, геккон!*\n\nСегодня ему исполняется *{age} {'год' if age == 1 else 'года' if 2 <= age <= 4 else 'лет'}* 🦎🎉"
     else:
-        text = f"🟡 *Сверчки на исходе* (день {days_since + 1} из {LIFESPAN}) — скоро покупать"
+        # Полгода: месяц + 6, с учётом перехода года
+        half_month = ((bday.month - 1 + 6) % 12) + 1
+        half_year = bday.year if bday.month <= 6 else bday.year + 1
+        if today.month == half_month and today.day == bday.day and today.year == half_year:
+            text = "🎉 *Геккону полгода!* 🦎\n\nПоловина первого года позади!"
+        else:
+            return
+
+    blocked = await get_blocked_user_ids()
+    from config import TELEGRAM_ADMINS
+    recipients = (TELEGRAM_SUPER_ADMINS | TELEGRAM_ADMINS) - blocked
+    if not TELEGRAM_BOT_TOKEN or not recipients:
+        return
+    for uid in recipients:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                    json={"chat_id": uid, "text": text, "parse_mode": "Markdown"},
+                )
+        except Exception as e:
+            log.debug("birthday send failed: %s", e)
+
+
+async def check_cricket_alert():
+    from database import get_cricket_remaining
+    remaining = await get_cricket_remaining()
+    if remaining is None:
+        return
+    if remaining > 5:
+        await _delete_alert_for_all("cricket")
+        return
+    if remaining == 0:
+        text = "🔴 *Сверчки закончились!* — купи новую партию"
+    else:
+        text = f"🟡 *Сверчков осталось мало: {remaining} шт.* — скоро покупать"
     markup = {"inline_keyboard": [[
         {"text": "🦗 Купил сверчков", "callback_data": "alert_cricket"},
     ]]}
@@ -177,27 +237,27 @@ async def check_cricket_alert():
         await _send_or_edit_alert(uid, "cricket", text, markup)
 
 
-def _is_lamp_on_now(hour: int, minute: int, duration_h: float) -> bool:
-    """Должна ли лампа сейчас гореть по расписанию."""
+def _lamp_window(hour: int, minute: int, duration_h: float) -> tuple[datetime, datetime]:
+    """Returns (start, end) datetime of the current/upcoming lamp window. End may be next-day for midnight crossings."""
     now = datetime.now()
     start = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     end = start + timedelta(hours=duration_h)
+    return start, end
+
+
+def _is_lamp_on_now(hour: int, minute: int, duration_h: float) -> bool:
+    """Должна ли лампа сейчас гореть по расписанию."""
+    start, end = _lamp_window(hour, minute, duration_h)
+    now = datetime.now()
     if end.day == start.day:
         return start <= now < end
-    # переход через полночь
     return now >= start or now < end
 
 
 def _remaining_seconds(hour: int, minute: int, duration_h: float) -> float:
     """Сколько секунд осталось до конца окна горения лампы. 0 если окно закончилось."""
-    now = datetime.now()
-    start = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    end = start + timedelta(hours=duration_h)
-    if end.day != start.day and now < end:
-        # переход через полночь, сейчас ещё до конца
-        pass
-    remaining = (end - now).total_seconds()
-    return max(0.0, remaining)
+    _, end = _lamp_window(hour, minute, duration_h)
+    return max(0.0, (end - datetime.now()).total_seconds())
 
 
 async def _lamp_off_after(lamp_type: str, seconds: float):
@@ -221,14 +281,19 @@ async def _recover_lamps(schedules: list[dict]):
 
     for lamp in ("uv", "heat"):
         status = tuya.get_lamp_status(lamp)
-        if status.get("switch") is True and lamp not in lamps_in_window:
+        currently_on = status.get("switch") is True
+        if lamp in lamps_in_window:
+            remaining = lamps_in_window[lamp]
+            if not currently_on:
+                log.info("recovery: turning on %s lamp (inside schedule window, was off)", lamp)
+                tuya.switch_lamp(lamp, True)
+                await log_lamp_event(lamp, "on", "scheduler:recovery")
+            log.info("recovery: %s lamp is in window, scheduling off in %.0fs", lamp, remaining)
+            asyncio.create_task(_lamp_off_after(lamp, remaining))
+        elif currently_on:
             log.info("recovery: turning off %s lamp (outside schedule window)", lamp)
             tuya.switch_lamp(lamp, False)
             await log_lamp_event(lamp, "off", "scheduler:recovery")
-        elif lamp in lamps_in_window:
-            remaining = lamps_in_window[lamp]
-            log.info("recovery: %s lamp is in window, scheduling off in %.0fs", lamp, remaining)
-            asyncio.create_task(_lamp_off_after(lamp, remaining))
 
 
 async def load_schedules():
@@ -262,6 +327,8 @@ async def load_schedules():
     scheduler.add_job(capture_timelapse_frame, "interval", seconds=5, id="timelapse_capture")
     scheduler.add_job(generate_and_send_timelapse, "cron", hour=12, minute=0, id="timelapse_generate")
     scheduler.add_job(generate_and_send_timelapse_preview, "cron", hour=0, minute=0, id="timelapse_preview")
+    scheduler.add_job(purge_expired_debug_tokens, "cron", hour=4, minute=0, id="purge_debug_tokens")
+    scheduler.add_job(check_birthday, "cron", hour=10, minute=0, id="birthday_check")
 
 
 async def _startup_alert_check():

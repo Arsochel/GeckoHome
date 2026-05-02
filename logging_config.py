@@ -35,7 +35,7 @@ class _ColorFormatter(logging.Formatter):
         )
 
 
-def setup_logging(debug: bool = False) -> None:
+def setup_logging(debug: bool = False, enable_debug_buffer: bool = False) -> logging.Handler:
     level = logging.DEBUG if debug else logging.INFO
 
     handler = logging.StreamHandler(sys.stdout)
@@ -60,3 +60,9 @@ def setup_logging(debug: bool = False) -> None:
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("tinytuya").setLevel(logging.WARNING)
+
+    if enable_debug_buffer:
+        from services.debug_log import attach
+        attach(handler)
+
+    return handler

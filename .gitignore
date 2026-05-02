@@ -23,3 +23,4 @@ build_dataset_timelapse.py
 convert_dataset.py
 timelapse_debug.py
 docs/
+logs/

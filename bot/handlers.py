@@ -1,8 +1,6 @@
 import asyncio
-import io
 import logging
 import os
-import tempfile
 from datetime import datetime
 
 log = logging.getLogger(__name__)
@@ -17,12 +15,12 @@ from database import (
     add_allowed_user, remove_allowed_user, update_user_info,
     get_schedules, save_schedule, delete_schedule, set_schedule_paused, log_lamp_event,
     log_feeding, get_feeding_history, get_motion_event, update_motion_status, get_allowed_users,
-    log_user_action, get_user_lang, get_sensor_history, get_zone_stats,
+    log_user_action, get_user_lang, get_sensor_history,
     get_next_feeding_supplements, log_cricket_purchase,
     get_feeding_count, get_last_note_date, get_last_cricket_purchase, get_last_feeding_cached,
     delete_alert_message, get_alert_message, save_alert_message, log_cricket_ran_out,
     set_user_blocked, was_user_revoked, get_cricket_stats,
-    log_cricket_feeding, get_last_cricket_feeding, append_feeding_note,
+    append_feeding_note, create_debug_token,
 )
 from bot.access import check_access, is_super_admin
 from bot.keyboards import main_keyboard, schedules_keyboard, admin_keyboard, feeding_keyboard, cricket_count_keyboard, stream_url
@@ -270,8 +268,6 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return await _handle_cricket_bought(query, user_id, ctx)
     if data == "cricket_out" and is_super_admin(user_id):
         return await _handle_cricket_out(query, user_id, ctx)
-    if data == "cricket_feed" and is_super_admin(user_id):
-        return await _handle_cricket_feed(query, user_id)
 
     # Alert buttons (из отдельного алерт-сообщения)
     if data == "alert_fed" and is_super_admin(user_id):
@@ -286,6 +282,8 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return await _handle_alert_fed_cancel(query)
     if data == "alert_cricket" and is_super_admin(user_id):
         return await _handle_alert_cricket(query, user_id)
+    if data == "alert_hornworm" and is_super_admin(user_id):
+        return await _handle_alert_hornworm(query, user_id)
 
     # Motion approval
     if data.startswith("motion_pub_") and is_super_admin(user_id):
@@ -298,6 +296,8 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return await _handle_admin(query)
     if data == "tunnel_restart" and is_super_admin(user_id):
         return await _handle_tunnel_restart(query)
+    if data == "debug_link" and is_super_admin(user_id):
+        return await _handle_debug_link(query, user_id)
     if data == "add_user" and is_super_admin(user_id):
         return await _handle_add_user_prompt(query, ctx)
     if data.startswith("rm_user_") and is_super_admin(user_id):
@@ -615,7 +615,7 @@ async def _handle_sched_select_lamp(query, ctx, lamp):
 
 async def _handle_tunnel_restart(query):
     await query.answer("🔄 Перезапуск туннеля...")
-    from main import restart_tunnel
+    from services.tunnel import restart as restart_tunnel
     await asyncio.to_thread(restart_tunnel)
     kb = await admin_keyboard()
     await _safe_edit(query, "⚙️ *Управление*\n━━━━━━━━━━━━━━━\n\n🔄 Туннель перезапущен, URL обновится через ~30с",
@@ -626,6 +626,28 @@ async def _handle_admin(query):
     kb = await admin_keyboard()
     await _safe_edit(query, "⚙️ *Управление*\n━━━━━━━━━━━━━━━",
                      parse_mode="Markdown", reply_markup=kb)
+
+
+async def _handle_debug_link(query, user_id: int):
+    import os as _os
+    tunnel_file = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "tunnel_url.txt")
+    lang = await get_lang(user_id)
+    try:
+        with open(tunnel_file) as f:
+            tunnel = f.read().strip()
+    except FileNotFoundError:
+        tunnel = ""
+    if not tunnel:
+        msg = "🛠 Туннель ещё не готов, попробуйте через минуту" if lang == "ru" else "🛠 Tunnel not ready, try again in a minute"
+        await query.answer(msg, show_alert=True)
+        return
+    token = await create_debug_token(user_id, ttl_hours=24)
+    url = f"{tunnel}/debug?token={token}"
+    if lang == "ru":
+        text = f"🛠 *Дебаг (24ч)*\n{url}\n\nДействует 24 часа, ссылка одноразовая."
+    else:
+        text = f"🛠 *Debug access (24h)*\n{url}\n\nValid for 24 hours."
+    await query.message.chat.send_message(text, parse_mode="Markdown", disable_web_page_preview=True)
 
 
 async def _handle_add_user_prompt(query, ctx):
@@ -653,7 +675,9 @@ async def _handle_calendar(query):
     last_feeding = get_last_feeding_cached()
     last_hornworm = await get_last_note_date("hornworm")
     last_vitamins = await get_last_note_date("vitamins")
-    cricket_bought, _ = await get_last_cricket_purchase()
+    cricket_bought, cricket_total = await get_last_cricket_purchase()
+    from database import get_cricket_remaining
+    cricket_remaining = await get_cricket_remaining()
 
     lines = ["📅 *Календарь ухода*\n━━━━━━━━━━━━━━━\n"]
 
@@ -715,19 +739,19 @@ async def _handle_calendar(query):
         lines.append("🔴 🐛 Бражник: *никогда не давали*")
 
     # Сверчки
-    if cricket_bought:
-        crickets_end = cricket_bought + timedelta(days=6)
-        delta = (crickets_end.date() - now.date()).days
-        if delta < 0:
+    if cricket_remaining is not None:
+        if cricket_remaining == 0:
             marker = "🔴"
             when = "закончились"
-        elif delta <= 1:
+        elif cricket_remaining <= 5:
             marker = "🟡"
-            when = f"остался {delta} д."
+            when = f"осталось {cricket_remaining} шт."
         else:
             marker = "🟢"
-            when = f"ещё {delta} д."
-        lines.append(f"{marker} 🦗 Сверчки до: *{crickets_end.strftime('%d.%m')}* ({when})")
+            when = f"осталось {cricket_remaining} шт."
+        lines.append(f"{marker} 🦗 Сверчки: *{when}* (куплено {cricket_total})")
+    elif cricket_bought:
+        lines.append("⚪️ 🦗 Сверчки: *количество не записано*")
     else:
         lines.append("⚪️ 🦗 Сверчки: *не записаны*")
 
@@ -779,56 +803,32 @@ async def _handle_cricket_out(query, user_id, ctx):
             pass
 
 
-async def _handle_cricket_feed(query, user_id):
-    lang = await get_lang(user_id)
-    last = await get_last_cricket_feeding()
-    await log_cricket_feeding()
-    if last:
-        from datetime import datetime
-        delta = datetime.now() - last
-        hours = int(delta.total_seconds() // 3600)
-        if hours < 1:
-            ago = "только что" if lang == "ru" else "just now"
-        elif hours < 24:
-            ago = f"{hours}ч назад" if lang == "ru" else f"{hours}h ago"
-        else:
-            days = hours // 24
-            ago = f"{days}д назад" if lang == "ru" else f"{days}d ago"
-        if lang == "en":
-            msg = f"🥦 Crickets fed! Last time: {ago}."
-        else:
-            msg = f"🥦 Сверчков покормил! Предыдущий раз: {ago}."
-    else:
-        msg = "🥦 Сверчков покормил!" if lang == "ru" else "🥦 Crickets fed!"
-    await query.answer(msg, show_alert=True)
-    await _safe_edit(query, "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
-                     parse_mode="Markdown", reply_markup=await feeding_keyboard(lang))
-
-
-def _cricket_count_from_notes(notes: str | None) -> int | None:
-    for part in (notes or "").split("+"):
-        if part.startswith("crickets:"):
-            try:
-                return int(part.split(":", 1)[1])
-            except ValueError:
-                pass
-    return None
-
 
 async def _handle_feeding_history(query):
     history = await get_feeding_history(20)
     if not history:
         text = "🍎 *История кормления*\n━━━━━━━━━━━━━━━\n\n_Нет записей_"
     else:
-        lines = []
+        parsed = []
         for entry in history:
-            dt = entry["fed_at"]
-            n = _cricket_count_from_notes(entry["notes"])
+            parsed.append((entry["fed_at"], entry["crickets"], entry["vitamins"], entry["hornworm"]))
+
+        show_crickets  = any(p[1] for p in parsed)
+        show_vitamins  = any(p[2] for p in parsed)
+        show_hornworm  = any(p[3] for p in parsed)
+
+        lines = []
+        for dt, crickets, has_vitamins, has_hornworm in parsed:
             line = f"• {dt.strftime('%d.%m.%Y  %H:%M')}"
-            if n:
-                line += f"  🦗×{n}"
+            if show_crickets:
+                line += f"  🦗×{crickets}" if crickets else "     —"
+            if show_vitamins:
+                line += "  💊" if has_vitamins else "   —"
+            if show_hornworm:
+                line += "  🐛" if has_hornworm else "   —"
             lines.append(line)
-        text = f"🍎 *История кормления*\n━━━━━━━━━━━━━━━\n\n" + "\n".join(lines)
+
+        text = "🍎 *История кормления*\n━━━━━━━━━━━━━━━\n\n" + "\n".join(lines)
     await _safe_edit(query, text, parse_mode="Markdown",
                      reply_markup=InlineKeyboardMarkup([
                          [InlineKeyboardButton("📊 Статистика", callback_data="cricket_stats")],
@@ -872,9 +872,7 @@ async def _handle_fed(query, user_id, ctx):
 
 async def _handle_fed_count(query, user_id, ctx, count: int):
     supplements = await get_next_feeding_supplements()
-    parts = [f"crickets:{count}"] + supplements
-    notes = "+".join(parts)
-    await log_feeding(notes=notes)
+    await log_feeding(crickets=count, vitamins="vitamins" in supplements, hornworm="hornworm" in supplements)
     lang = await get_lang(user_id)
     confirm = f"✅ Записано! Дал {count} сверчков." if lang == "ru" else f"✅ Fed {count} crickets!"
     await query.answer(confirm, show_alert=True)
@@ -921,9 +919,7 @@ async def _handle_alert_fed(query, user_id):
 
 async def _handle_alert_fed_count(query, user_id, count: int):
     supplements = await get_next_feeding_supplements()
-    parts = [f"crickets:{count}"] + supplements
-    notes = "+".join(parts)
-    await log_feeding(notes=notes)
+    await log_feeding(crickets=count, vitamins="vitamins" in supplements, hornworm="hornworm" in supplements)
     confirm = f"✅ Записано! Дал {count} сверчков." if await get_lang(user_id) == "ru" else f"✅ Fed {count} crickets!"
     await query.answer(confirm, show_alert=True)
     await delete_alert_message(user_id, "feeding")
@@ -935,10 +931,14 @@ async def _handle_alert_fed_count(query, user_id, count: int):
 
 async def _handle_alert_fed_cancel(query):
     """Восстанавливаем оригинальные кнопки алерта (пользователь передумал)."""
-    markup = InlineKeyboardMarkup([[
+    supplements = await get_next_feeding_supplements()
+    row = [
         InlineKeyboardButton("🍎 Покормил", callback_data="alert_fed"),
         InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket"),
-    ]])
+    ]
+    if "hornworm" in supplements:
+        row.append(InlineKeyboardButton("🐛 Дал бражника", callback_data="alert_hornworm"))
+    markup = InlineKeyboardMarkup([row])
     try:
         await query.edit_message_text("🔴 *Пора кормить!*", parse_mode="Markdown", reply_markup=markup)
     except Exception:
@@ -949,6 +949,12 @@ async def _handle_alert_cricket(query, user_id):
     await log_cricket_purchase()
     await query.answer("🦗 Сверчки записаны!")
     await _remove_alert_button(query, user_id, "alert_cricket", "cricket")
+
+
+async def _handle_alert_hornworm(query, user_id):
+    await append_feeding_note("hornworm")
+    await query.answer("🐛 Бражник записан!")
+    await _remove_alert_button(query, user_id, "alert_hornworm", "feeding")
 
 
 async def _handle_motion_pub(query, ctx, event_id: int):

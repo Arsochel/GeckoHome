@@ -210,17 +210,6 @@ async def init_db():
         except Exception:
             pass
 
-        # cricket_feedings table
-        try:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS cricket_feedings (
-                    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-                    fed_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-        except Exception:
-            pass
-
         # drop empty legacy tables
         for t in ("photos",):
             try:
@@ -228,8 +217,59 @@ async def init_db():
             except Exception:
                 pass
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS debug_tokens (
+                token       TEXT PRIMARY KEY,
+                user_id     INTEGER NOT NULL,
+                issued_at   TIMESTAMP NOT NULL,
+                expires_at  TIMESTAMP NOT NULL,
+                revoked     INTEGER DEFAULT 0
+            )
+        """)
+
         await db.commit()
     await _init_media_db()
+
+
+async def create_debug_token(user_id: int, ttl_hours: int = 24) -> str:
+    import secrets
+    token = secrets.token_urlsafe(16)
+    now = datetime.now()
+    expires = now + timedelta(hours=ttl_hours)
+    async with _db(write=True) as db:
+        await db.execute(
+            "INSERT INTO debug_tokens (token, user_id, issued_at, expires_at) VALUES (?,?,?,?)",
+            (token, user_id, now.isoformat(), expires.isoformat()),
+        )
+    return token
+
+
+async def validate_debug_token(token: str) -> int | None:
+    if not token:
+        return None
+    async with _db() as db:
+        async with db.execute(
+            "SELECT user_id, expires_at, revoked FROM debug_tokens WHERE token=?",
+            (token,),
+        ) as cur:
+            row = await cur.fetchone()
+    if not row or row["revoked"]:
+        return None
+    try:
+        expires = datetime.fromisoformat(row["expires_at"])
+    except (TypeError, ValueError):
+        return None
+    if expires < datetime.now():
+        return None
+    return int(row["user_id"])
+
+
+async def purge_expired_debug_tokens():
+    async with _db(write=True) as db:
+        await db.execute(
+            "DELETE FROM debug_tokens WHERE expires_at < ?",
+            (datetime.now().isoformat(),),
+        )
 
 
 async def _init_media_db():
@@ -261,17 +301,6 @@ async def log_user_action(user_id: int, username: str | None, action: str):
             f" ON CONFLICT(user_id) DO UPDATE SET {col} = {col} + 1",
             (user_id,),
         )
-
-
-async def get_user_stats() -> list[dict]:
-    async with _db() as db:
-        async with db.execute("""
-            SELECT u.username, a.user_id, a.snapshots, a.clips_30, a.clips_3min, a.streams
-            FROM user_actions a
-            LEFT JOIN allowed_users u ON u.user_id = a.user_id
-            ORDER BY a.snapshots + a.clips_30 + a.clips_3min + a.streams DESC
-        """) as cur:
-            return [dict(r) for r in await cur.fetchall()]
 
 
 # ── Schedules ──
@@ -493,6 +522,40 @@ async def get_motion_event(event_id: int) -> dict | None:
             return dict(row) if row else None
 
 
+async def get_motion_events_24h_count() -> int:
+    cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
+    async with _db() as db:
+        async with db.execute(
+            "SELECT COUNT(*) AS n FROM motion_events WHERE created_at >= ?",
+            (cutoff,),
+        ) as cur:
+            row = await cur.fetchone()
+    return int(row["n"]) if row else 0
+
+
+async def get_recent_motion_events(limit: int = 20) -> list[dict]:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT created_at, caption, photo_file_id, status FROM motion_events ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+    out = []
+    for r in rows:
+        ts = None
+        try:
+            ts = datetime.fromisoformat(r["created_at"]).timestamp()
+        except (TypeError, ValueError):
+            pass
+        out.append({
+            "ts": ts,
+            "caption": r["caption"],
+            "photo_file_id": r["photo_file_id"],
+            "status": r["status"],
+        })
+    return out
+
+
 async def update_motion_status(event_id: int, status: str):
     async with _db(write=True) as db:
         await db.execute("UPDATE motion_events SET status = ? WHERE id = ?", (status, event_id))
@@ -517,28 +580,47 @@ async def load_last_feeding():
                 _last_feeding_time = datetime.fromisoformat(row["fed_at"])
 
 
-async def log_feeding(notes: str | None = None):
+async def _today_feeding(db):
+    async with db.execute(
+        "SELECT id, crickets, vitamins, hornworm FROM feedings"
+        " WHERE DATE(fed_at) = DATE('now', 'localtime') ORDER BY fed_at DESC LIMIT 1"
+    ) as cur:
+        return await cur.fetchone()
+
+
+async def log_feeding(crickets: int | None = None, vitamins: bool = False, hornworm: bool = False):
     global _last_feeding_time
-    _last_feeding_time = datetime.now()
+    _last_feeding_time = datetime.now().replace(microsecond=0)
     async with _db(write=True) as db:
-        await db.execute("INSERT INTO feedings (fed_at, notes) VALUES (?, ?)", (_last_feeding_time, notes))
+        row = await _today_feeding(db)
+        if row:
+            new_crickets = crickets if crickets is not None else row["crickets"]
+            new_vitamins = int(vitamins or row["vitamins"])
+            new_hornworm = int(hornworm or row["hornworm"])
+            await db.execute(
+                "UPDATE feedings SET crickets=?, vitamins=?, hornworm=? WHERE id=?",
+                (new_crickets, new_vitamins, new_hornworm, row["id"]),
+            )
+        else:
+            await db.execute(
+                "INSERT INTO feedings (fed_at, crickets, vitamins, hornworm) VALUES (?, ?, ?, ?)",
+                (_last_feeding_time, crickets, int(vitamins), int(hornworm)),
+            )
 
 
 async def append_feeding_note(note: str):
     """Добавляет заметку к сегодняшнему кормлению; если кормления нет — создаёт новое."""
-    async with _db(write=True) as db:
-        async with db.execute(
-            "SELECT id, notes FROM feedings WHERE DATE(fed_at) = DATE('now', 'localtime') ORDER BY fed_at DESC LIMIT 1"
-        ) as cur:
-            row = await cur.fetchone()
-        if row:
-            existing = row["notes"] or ""
-            parts = [p for p in existing.split("+") if p]
-            if note not in parts:
-                parts.append(note)
-            await db.execute("UPDATE feedings SET notes = ? WHERE id = ?", ("+".join(parts), row["id"]))
-        else:
-            await log_feeding(notes=note)
+    col = {"vitamins": "vitamins", "hornworm": "hornworm"}.get(note)
+    if col:
+        async with _db(write=True) as db:
+            row = await _today_feeding(db)
+            if row:
+                await db.execute(f"UPDATE feedings SET {col}=1 WHERE id=?", (row["id"],))
+            else:
+                await log_feeding(**{col: True})
+    else:
+        # неизвестная заметка — игнорируем
+        pass
 
 
 def get_last_feeding_cached() -> datetime | None:
@@ -561,11 +643,13 @@ async def get_feeding_count() -> int:
 
 
 async def get_last_note_date(note: str) -> datetime | None:
-    """Возвращает дату последнего кормления с указанной заметкой (например 'hornworm')."""
+    """Возвращает дату последнего кормления с указанной заметкой (vitamins или hornworm)."""
+    col = {"vitamins": "vitamins", "hornworm": "hornworm"}.get(note)
+    if not col:
+        return None
     async with _db() as db:
         async with db.execute(
-            "SELECT fed_at FROM feedings WHERE notes LIKE ? ORDER BY fed_at DESC LIMIT 1",
-            (f"%{note}%",),
+            f"SELECT fed_at FROM feedings WHERE {col}=1 ORDER BY fed_at DESC LIMIT 1"
         ) as cur:
             row = await cur.fetchone()
             return datetime.fromisoformat(row["fed_at"]) if row else None
@@ -574,20 +658,6 @@ async def get_last_note_date(note: str) -> datetime | None:
 async def log_cricket_purchase(count: int = 20):
     async with _db(write=True) as db:
         await db.execute("INSERT INTO cricket_batches (bought_at, count) VALUES (?, ?)", (datetime.now(), count))
-
-
-async def log_cricket_feeding():
-    async with _db(write=True) as db:
-        await db.execute("INSERT INTO cricket_feedings (fed_at) VALUES (?)", (datetime.now(),))
-
-
-async def get_last_cricket_feeding() -> datetime | None:
-    async with _db() as db:
-        async with db.execute(
-            "SELECT fed_at FROM cricket_feedings ORDER BY fed_at DESC LIMIT 1"
-        ) as cur:
-            row = await cur.fetchone()
-            return datetime.fromisoformat(row["fed_at"]) if row else None
 
 
 async def log_cricket_ran_out():
@@ -616,6 +686,20 @@ async def get_last_cricket_purchase() -> tuple[datetime | None, int]:
             return datetime.fromisoformat(row["bought_at"]), row["count"]
 
 
+async def get_cricket_remaining() -> int | None:
+    """Остаток сверчков: куплено минус съедено с момента последней закупки."""
+    bought_at, total = await get_last_cricket_purchase()
+    if bought_at is None or total == 0:
+        return None
+    async with _db() as db:
+        async with db.execute(
+            "SELECT COALESCE(SUM(crickets), 0) as eaten FROM feedings WHERE fed_at >= ? AND crickets IS NOT NULL",
+            (bought_at,),
+        ) as cur:
+            row = await cur.fetchone()
+    return max(0, total - (row["eaten"] or 0))
+
+
 async def get_next_feeding_supplements() -> list[str]:
     """Возвращает список добавок для следующего кормления."""
     supplements = []
@@ -638,6 +722,13 @@ async def set_gecko_state(state: str):
             " ON CONFLICT(id) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at",
             (state, now),
         )
+
+
+async def get_gecko_birthday() -> str | None:
+    async with _db() as db:
+        async with db.execute("SELECT value FROM gecko_profile WHERE key='birthday'") as cur:
+            row = await cur.fetchone()
+            return row["value"] if row else None
 
 
 async def get_gecko_state() -> tuple[str | None, datetime | None]:
@@ -667,11 +758,6 @@ async def get_gecko_zone() -> tuple[str | None, datetime | None]:
             if not row:
                 return None, None
             return row["zone"], datetime.fromisoformat(row["updated_at"])
-
-
-async def get_zone_stats(hours: int = 24) -> list[dict]:
-    """Заглушка — зональная история больше не хранится."""
-    return []
 
 
 async def get_sensor_history(hours: int = 24) -> list[dict]:
@@ -707,10 +793,15 @@ async def set_user_lang(user_id: int, lang: str):
 async def get_feeding_history(limit: int = 10) -> list[dict]:
     async with _db() as db:
         async with db.execute(
-            "SELECT fed_at, notes FROM feedings ORDER BY fed_at DESC LIMIT ?", (limit,)
+            "SELECT fed_at, crickets, vitamins, hornworm FROM feedings ORDER BY fed_at DESC LIMIT ?", (limit,)
         ) as cur:
             return [
-                {"fed_at": datetime.fromisoformat(r["fed_at"]), "notes": r["notes"]}
+                {
+                    "fed_at": datetime.fromisoformat(r["fed_at"]),
+                    "crickets": r["crickets"],
+                    "vitamins": bool(r["vitamins"]),
+                    "hornworm": bool(r["hornworm"]),
+                }
                 for r in await cur.fetchall()
             ]
 
@@ -718,18 +809,12 @@ async def get_feeding_history(limit: int = 10) -> list[dict]:
 async def get_cricket_stats() -> dict:
     """Суммарная статистика по количеству сверчков."""
     async with _db() as db:
-        async with db.execute("SELECT notes FROM feedings WHERE notes LIKE '%crickets:%'") as cur:
-            rows = await cur.fetchall()
-    total = 0
-    count = 0
-    for row in rows:
-        for part in (row["notes"] or "").split("+"):
-            if part.startswith("crickets:"):
-                try:
-                    total += int(part.split(":", 1)[1])
-                    count += 1
-                except ValueError:
-                    pass
+        async with db.execute(
+            "SELECT COALESCE(SUM(crickets), 0) as total, COUNT(*) as count"
+            " FROM feedings WHERE crickets IS NOT NULL"
+        ) as cur:
+            row = await cur.fetchone()
+    total, count = row["total"] or 0, row["count"] or 0
     return {"total": total, "count": count, "avg": round(total / count, 1) if count else 0}
 
 

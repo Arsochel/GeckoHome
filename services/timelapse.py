@@ -1,7 +1,9 @@
 import asyncio
+import json
 import logging
 import os
 import pathlib
+import shutil
 import subprocess
 import tempfile
 from datetime import date, datetime, timedelta
@@ -30,8 +32,8 @@ def _strip_exif(path: str):
         img = Image.open(path)
         img = ImageOps.exif_transpose(img)
         img.save(path, quality=95, exif=b"")
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("strip_exif failed: %s", e)
 
 
 def capture_timelapse_frame():
@@ -59,24 +61,16 @@ def capture_timelapse_frame():
 
 TIMELAPSE_DIFF_THRESHOLD = 5.5  # % значимых пикселей между кадрами
 TIMELAPSE_DIFF_PIXEL_MIN = 12   # минимальный diff пикселя чтобы считаться значимым
-YOLO_MODEL_PATH = r"C:\Users\artem\runs\detect\train6\weights\best.pt"
-YOLO_CONF = 0.7
-
-_yolo_model = None
-
-
-def _get_yolo():
-    global _yolo_model
-    if _yolo_model is None:
-        from ultralytics import YOLO
-        _yolo_model = YOLO(YOLO_MODEL_PATH)
-    return _yolo_model
+YOLO_CONF = 0.8
 
 
 def _detect_gecko(bgr):
     """Возвращает список bbox [(x1,y1,x2,y2,conf)] или []."""
     try:
-        model = _get_yolo()
+        from services.yolo import get_model
+        model = get_model()
+        if model is None:
+            return []
         results = model(bgr, conf=YOLO_CONF, verbose=False)
         boxes = []
         for r in results:
@@ -112,38 +106,6 @@ def _compute_diff(gray1, gray2, mask=None):
     return float(significant.sum()) / diff.size * 100
 
 
-def _filter_similar_frames(frames_dir: str, frame_names: list[str]) -> list[str]:
-    """Убирает кадры слишком похожие на предыдущий. Использует YOLO-маску если геккон виден."""
-    import numpy as np
-    result = []
-    prev_gray = None
-    prev_bgr = None
-    skipped = 0
-    for name in frame_names:
-        path = os.path.join(frames_dir, name)
-        bgr = cv2.imread(path)
-        if bgr is None:
-            continue
-        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-        if prev_gray is None:
-            result.append(name)
-            prev_gray, prev_bgr = gray, bgr
-            continue
-        if gray.shape != prev_gray.shape:
-            gray = cv2.resize(gray, (prev_gray.shape[1], prev_gray.shape[0]))
-        # YOLO-маска из обоих кадров
-        boxes = _detect_gecko(prev_bgr) + _detect_gecko(bgr)
-        mask = _boxes_to_mask(gray.shape, boxes) if boxes else None
-        score = _compute_diff(prev_gray, gray, mask=mask)
-        if score >= TIMELAPSE_DIFF_THRESHOLD:
-            result.append(name)
-            prev_gray, prev_bgr = gray, bgr
-        else:
-            skipped += 1
-    log.info("filtered %d/%d frames (threshold=%.1f%%)", skipped, len(frame_names), TIMELAPSE_DIFF_THRESHOLD)
-    return result
-
-
 def _collect_frames(from_dt: datetime, to_dt: datetime) -> list[tuple[str, str]]:
     """Возвращает список (frames_dir, filename) за период [from_dt, to_dt)."""
     result = []
@@ -172,23 +134,12 @@ def _collect_frames(from_dt: datetime, to_dt: datetime) -> list[tuple[str, str]]
     return result
 
 
-def _prune_frames(frame_pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    """Удаляет кадры не прошедшие фильтр схожести, возвращает оставшиеся."""
-    # Группируем по папкам для фильтрации
-    by_dir: dict[str, list[str]] = {}
-    for d, n in frame_pairs:
-        by_dir.setdefault(d, []).append(n)
-
-    # Строим единый отфильтрованный список сохраняя порядок
-    keep_set: set[tuple[str, str]] = set()
-    all_names = [(d, n) for d, n in frame_pairs]
-    # Фильтруем как единую последовательность
-    import numpy as np
-    result = []
+def _select_changing_frames(frame_pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Возвращает подмножество frame_pairs где каждый кадр отличается от предыдущего на >= TIMELAPSE_DIFF_THRESHOLD."""
+    result: list[tuple[str, str]] = []
     prev_gray = None
     prev_bgr = None
-    skipped = 0
-    for (d, name) in all_names:
+    for (d, name) in frame_pairs:
         path = os.path.join(d, name)
         bgr = cv2.imread(path)
         if bgr is None:
@@ -206,20 +157,22 @@ def _prune_frames(frame_pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
         if score >= TIMELAPSE_DIFF_THRESHOLD:
             result.append((d, name))
             prev_gray, prev_bgr = gray, bgr
-        else:
-            skipped += 1
+    return result
 
-    # Удаляем файлы не вошедшие в результат
+
+def _prune_frames(frame_pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Удаляет кадры не прошедшие фильтр схожести, возвращает оставшиеся."""
+    result = _select_changing_frames(frame_pairs)
     keep_set = set(result)
     deleted = 0
-    for (d, name) in all_names:
+    for (d, name) in frame_pairs:
         if (d, name) not in keep_set:
             try:
                 os.unlink(os.path.join(d, name))
                 deleted += 1
             except OSError:
                 pass
-    log.info("pruned %d/%d frames, kept %d", deleted, len(all_names), len(result))
+    log.info("pruned %d/%d frames, kept %d", deleted, len(frame_pairs), len(result))
     return result
 
 
@@ -237,8 +190,8 @@ def _normalize_frames(frame_pairs: list[tuple[str, str]]) -> tuple[str, list[str
             img = ImageOps.exif_transpose(img)
             img.save(dst, quality=95, exif=b"")
             names.append(dst_name)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("normalize_frames failed for %s: %s", src, e)
     return tmp_dir, names
 
 
@@ -250,7 +203,6 @@ def _compile_timelapse(frame_pairs: list[tuple[str, str]], fps: int, output_path
     # Нормализуем кадры — применяем EXIF к пикселям, убираем метаданные
     tmp_dir, norm_names = _normalize_frames(frame_pairs)
     if len(norm_names) < 10:
-        import shutil
         shutil.rmtree(tmp_dir, ignore_errors=True)
         return False
 
@@ -282,7 +234,6 @@ def _compile_timelapse(frame_pairs: list[tuple[str, str]], fps: int, output_path
             os.unlink(list_path)
         except OSError:
             pass
-        import shutil
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
@@ -299,7 +250,6 @@ async def _send_video(path: str, caption: str, recipients: set[int], reply_marku
             try:
                 data: dict = {"chat_id": str(uid), "caption": caption}
                 if reply_markup:
-                    import json
                     data["reply_markup"] = json.dumps(reply_markup)
                 with open(path, "rb") as f:
                     resp = await client.post(

@@ -65,7 +65,8 @@ def _listener_thread():
                         # попробуем через status payload
                         parsed = d.receive()
                         dps = parsed.get("dps", {}) if parsed else {}
-                except Exception:
+                except Exception as e:
+                    log.debug("decode broadcast: %s", e)
                     continue
                 temp = dps.get("1") or dps.get(1)
                 hum  = dps.get("2") or dps.get(2)
@@ -104,8 +105,8 @@ def _notify_thermometer_online(temp, hum):
                     json={"chat_id": uid, "text": text, "parse_mode": "Markdown"},
                     timeout=10,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("tg notify thermometer: %s", e)
     threading.Thread(target=_send, daemon=True).start()
 
 

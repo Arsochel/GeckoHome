@@ -10,6 +10,72 @@ from bot.i18n import get_lang
 from config import STREAM_BASE_URL
 
 
+_CAM_LABELS = {
+    "en": {
+        "snap": "📸 Snapshot",
+        "clip": "🎬 Clip 30s",
+        "clip3": "🎥 Clip 3 min",
+        "stream": "📡 Stream",
+        "detect": "🔍 Stream+detect",
+    },
+    "ru": {
+        "snap": "📸 Снимок",
+        "clip": "🎬 Клип 30с",
+        "clip3": "🎥 Клип 3 мин",
+        "stream": "📡 Стрим",
+        "detect": "🔍 Стрим+детект",
+    },
+}
+
+_MAIN_LABELS = {
+    "en": {
+        "uv_on": "🔦 UV: off ➜ on",
+        "uv_off": "🔦 UV: on ➜ off",
+        "heat_on": "🔥 Heat: off ➜ on",
+        "heat_off": "🔥 Heat: on ➜ off",
+        "feeding": "🍎 Feeding",
+        "schedules": "📋 Schedules",
+        "debug": "🛠 Debug",
+        "settings": "⚙️ Settings",
+        "settings_pending": "⚙️ Settings 🔴 {n}",
+    },
+    "ru": {
+        "uv_on": "🔦 UV: выкл ➜ вкл",
+        "uv_off": "🔦 UV: вкл ➜ выкл",
+        "heat_on": "🔥 Тепловая: выкл ➜ вкл",
+        "heat_off": "🔥 Тепловая: вкл ➜ выкл",
+        "feeding": "🍎 Питание",
+        "schedules": "📋 Расписания",
+        "debug": "🛠 Дебаг",
+        "settings": "⚙️ Управление",
+        "settings_pending": "⚙️ Управление 🔴 {n}",
+    },
+}
+
+_FEEDING_LABELS = {
+    "en": {
+        "fed": "🍎 Fed",
+        "hornworm": "🐛 Hornworm",
+        "vitamins": "💊 Vitamins",
+        "cricket_bought": "🦗 Crickets bought",
+        "cricket_out": "🦗 Ran out",
+        "calendar": "📅 Calendar",
+        "history": "📋 Feeding history",
+        "back": "◀ Back",
+    },
+    "ru": {
+        "fed": "🍎 Покормил",
+        "hornworm": "🐛 Бражник",
+        "vitamins": "💊 Витамины",
+        "cricket_bought": "🦗 Купил сверчков",
+        "cricket_out": "🦗 Закончились",
+        "calendar": "📅 Календарь",
+        "history": "📋 История кормления",
+        "back": "◀ Назад",
+    },
+}
+
+
 def detect_stream_url() -> str | None:
     url = stream_url()
     if url:
@@ -38,40 +104,23 @@ def stream_url() -> str | None:
 def _camera_rows(lang: str = "ru", super_admin: bool = False) -> list:
     if not camera.is_configured():
         return []
-    if lang == "en":
-        rows = [
-            [
-                InlineKeyboardButton("📸 Snapshot", callback_data="cam_snap"),
-                InlineKeyboardButton("🎬 Clip 30s", callback_data="cam_clip"),
-            ],
-            [
-                InlineKeyboardButton("🎥 Clip 3 min", callback_data="cam_clip3"),
-            ],
-        ]
-        url = stream_url()
-        if url:
-            rows.append([InlineKeyboardButton("📡 Stream", web_app=WebAppInfo(url=url))])
-        if super_admin:
-            det_url = detect_stream_url()
-            if det_url:
-                rows.append([InlineKeyboardButton("🔍 Stream+detect", web_app=WebAppInfo(url=det_url))])
-    else:
-        rows = [
-            [
-                InlineKeyboardButton("📸 Снимок", callback_data="cam_snap"),
-                InlineKeyboardButton("🎬 Клип 30с", callback_data="cam_clip"),
-            ],
-            [
-                InlineKeyboardButton("🎥 Клип 3 мин", callback_data="cam_clip3"),
-            ],
-        ]
-        url = stream_url()
-        if url:
-            rows.append([InlineKeyboardButton("📡 Стрим", web_app=WebAppInfo(url=url))])
-        if super_admin:
-            det_url = detect_stream_url()
-            if det_url:
-                rows.append([InlineKeyboardButton("🔍 Стрим+детект", web_app=WebAppInfo(url=det_url))])
+    L = _CAM_LABELS.get(lang, _CAM_LABELS["ru"])
+    rows = [
+        [
+            InlineKeyboardButton(L["snap"], callback_data="cam_snap"),
+            InlineKeyboardButton(L["clip"], callback_data="cam_clip"),
+        ],
+        [
+            InlineKeyboardButton(L["clip3"], callback_data="cam_clip3"),
+        ],
+    ]
+    url = stream_url()
+    if url:
+        rows.append([InlineKeyboardButton(L["stream"], web_app=WebAppInfo(url=url))])
+    if super_admin:
+        det_url = detect_stream_url()
+        if det_url:
+            rows.append([InlineKeyboardButton(L["detect"], web_app=WebAppInfo(url=det_url))])
     return rows
 
 
@@ -102,40 +151,24 @@ async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
     heat_on = heat.get("switch") is True
 
     requests = await get_access_requests()
-    if lang == "en":
-        admin_label = f"⚙️ Settings 🔴 {len(requests)}" if requests else "⚙️ Settings"
-        rows = [
-            [InlineKeyboardButton(
-                f"🔦 UV: {'off ➜ on' if not uv_on else 'on ➜ off'}",
-                callback_data="uv_on" if not uv_on else "uv_off",
-            )],
-            [InlineKeyboardButton(
-                f"🔥 Heat: {'off ➜ on' if not heat_on else 'on ➜ off'}",
-                callback_data="heat_on" if not heat_on else "heat_off",
-            )],
-            *_camera_rows(lang, super_admin=True),
-            [InlineKeyboardButton("🍎 Feeding", callback_data="feeding_menu")],
-            [InlineKeyboardButton("📋 Schedules", callback_data="schedules")],
-            [InlineKeyboardButton(admin_label, callback_data="admin")],
-            [await _lang_button(user_id)],
-        ]
-    else:
-        admin_label = f"⚙️ Управление 🔴 {len(requests)}" if requests else "⚙️ Управление"
-        rows = [
-            [InlineKeyboardButton(
-                f"🔦 UV: {'выкл ➜ вкл' if not uv_on else 'вкл ➜ выкл'}",
-                callback_data="uv_on" if not uv_on else "uv_off",
-            )],
-            [InlineKeyboardButton(
-                f"🔥 Тепловая: {'выкл ➜ вкл' if not heat_on else 'вкл ➜ выкл'}",
-                callback_data="heat_on" if not heat_on else "heat_off",
-            )],
-            *_camera_rows(lang, super_admin=True),
-            [InlineKeyboardButton("🍎 Питание", callback_data="feeding_menu")],
-            [InlineKeyboardButton("📋 Расписания", callback_data="schedules")],
-            [InlineKeyboardButton(admin_label, callback_data="admin")],
-            [await _lang_button(user_id)],
-        ]
+    L = _MAIN_LABELS.get(lang, _MAIN_LABELS["ru"])
+    admin_label = L["settings_pending"].format(n=len(requests)) if requests else L["settings"]
+    rows = [
+        [InlineKeyboardButton(
+            L["uv_off"] if uv_on else L["uv_on"],
+            callback_data="uv_off" if uv_on else "uv_on",
+        )],
+        [InlineKeyboardButton(
+            L["heat_off"] if heat_on else L["heat_on"],
+            callback_data="heat_off" if heat_on else "heat_on",
+        )],
+        *_camera_rows(lang, super_admin=True),
+        [InlineKeyboardButton(L["feeding"], callback_data="feeding_menu")],
+        [InlineKeyboardButton(L["schedules"], callback_data="schedules")],
+        [InlineKeyboardButton(L["debug"], callback_data="debug_link")],
+        [InlineKeyboardButton(admin_label, callback_data="admin")],
+        [await _lang_button(user_id)],
+    ]
     return InlineKeyboardMarkup(rows)
 
 
@@ -147,30 +180,17 @@ def cricket_count_keyboard(lang: str = "ru", prefix: str = "fed_count_", back: s
 
 
 async def feeding_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
-    if lang == "en":
-        rows = [
-            [InlineKeyboardButton("🍎 Fed", callback_data="fed")],
-            [InlineKeyboardButton("🐛 Hornworm", callback_data="fed_hornworm"),
-             InlineKeyboardButton("💊 Vitamins", callback_data="fed_vitamins")],
-            [InlineKeyboardButton("🦗 Crickets bought", callback_data="cricket_bought"),
-             InlineKeyboardButton("🦗 Ran out", callback_data="cricket_out")],
-            [InlineKeyboardButton("🥦 Feed crickets", callback_data="cricket_feed")],
-            [InlineKeyboardButton("📅 Calendar", callback_data="calendar")],
-            [InlineKeyboardButton("📋 Feeding history", callback_data="feeding_history")],
-            [InlineKeyboardButton("◀ Back", callback_data="back_main")],
-        ]
-    else:
-        rows = [
-            [InlineKeyboardButton("🍎 Покормил", callback_data="fed")],
-            [InlineKeyboardButton("🐛 Бражник", callback_data="fed_hornworm"),
-             InlineKeyboardButton("💊 Витамины", callback_data="fed_vitamins")],
-            [InlineKeyboardButton("🦗 Купил сверчков", callback_data="cricket_bought"),
-             InlineKeyboardButton("🦗 Закончились", callback_data="cricket_out")],
-            [InlineKeyboardButton("🥦 Покормить сверчков", callback_data="cricket_feed")],
-            [InlineKeyboardButton("📅 Календарь", callback_data="calendar")],
-            [InlineKeyboardButton("📋 История кормления", callback_data="feeding_history")],
-            [InlineKeyboardButton("◀ Назад", callback_data="back_main")],
-        ]
+    L = _FEEDING_LABELS.get(lang, _FEEDING_LABELS["ru"])
+    rows = [
+        [InlineKeyboardButton(L["fed"], callback_data="fed")],
+        [InlineKeyboardButton(L["hornworm"], callback_data="fed_hornworm"),
+         InlineKeyboardButton(L["vitamins"], callback_data="fed_vitamins")],
+        [InlineKeyboardButton(L["cricket_bought"], callback_data="cricket_bought"),
+         InlineKeyboardButton(L["cricket_out"], callback_data="cricket_out")],
+        [InlineKeyboardButton(L["calendar"], callback_data="calendar")],
+        [InlineKeyboardButton(L["history"], callback_data="feeding_history")],
+        [InlineKeyboardButton(L["back"], callback_data="back_main")],
+    ]
     return InlineKeyboardMarkup(rows)
 
 

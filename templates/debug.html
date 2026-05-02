@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gecko Debug</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            min-height: 100vh;
+            background: #0a0f0a;
+            font-family: "Segoe UI", system-ui, sans-serif;
+            color: #e0e0e0;
+            font-size: 14px;
+        }
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 24px;
+            border-bottom: 1px solid #1a251a;
+            background: #0e140e;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .header-left { display: flex; align-items: center; gap: 10px; }
+        .header-left h1 { font-size: 18px; font-weight: 600; color: #d0d0d0; }
+        .metrics-bar {
+            display: flex;
+            gap: 18px;
+            font-size: 12px;
+            color: #808080;
+            flex-wrap: wrap;
+        }
+        .metrics-bar b { color: #d0d0d0; font-weight: 600; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        details {
+            background: #141a14;
+            border: 1px solid #1e2e1e;
+            border-radius: 12px;
+            margin-bottom: 16px;
+            overflow: hidden;
+        }
+        details > summary {
+            padding: 14px 18px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: #4a6a4a;
+            user-select: none;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        details > summary::-webkit-details-marker { display: none; }
+        details > summary::after {
+            content: "▼";
+            font-size: 10px;
+            color: #4a6a4a;
+            transition: transform 0.2s;
+        }
+        details:not([open]) > summary::after { transform: rotate(-90deg); }
+        details[open] > summary { border-bottom: 1px solid #1e2e1e; }
+        .section-body { padding: 16px 18px; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .grid-cam { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; align-items: start; }
+        .grid-motion-streams { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .stream-box {
+            position: relative;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            aspect-ratio: 9/16;
+        }
+        .stream-box img, .stream-box video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+        }
+        .stream-label {
+            position: absolute;
+            top: 6px;
+            left: 8px;
+            background: rgba(0,0,0,0.6);
+            color: #d0d0d0;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .badges { display: flex; flex-direction: column; gap: 8px; }
+        .badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #111711;
+            border: 1px solid #1e2e1e;
+            border-radius: 8px;
+            font-size: 12px;
+            color: #a0a0a0;
+        }
+        .badge code {
+            color: #c0c0c0;
+            background: #0a0f0a;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-left: auto;
+        }
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #555;
+            flex-shrink: 0;
+        }
+        .dot.ok { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.4); }
+        .dot.err { background: #ef4444; }
+        .dot.na { background: #555; }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+        .info-item {
+            padding: 10px 12px;
+            background: #111711;
+            border: 1px solid #1e2e1e;
+            border-radius: 8px;
+        }
+        .info-item .k {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #5a7a5a;
+            margin-bottom: 4px;
+        }
+        .info-item .v {
+            font-size: 14px;
+            color: #e0e0e0;
+            font-weight: 600;
+        }
+        .slider-row {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 12px;
+            background: #111711;
+            border: 1px solid #1e2e1e;
+            border-radius: 8px;
+            margin-bottom: 14px;
+        }
+        .slider-row label { font-size: 12px; color: #a0a0a0; min-width: 100px; }
+        .slider-row input[type=range] { flex: 1; accent-color: #22c55e; }
+        .slider-row .val {
+            font-variant-numeric: tabular-nums;
+            color: #22c55e;
+            font-weight: 600;
+            min-width: 42px;
+            text-align: right;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        table th, table td {
+            text-align: left;
+            padding: 8px 10px;
+            border-bottom: 1px solid #1a251a;
+            color: #c0c0c0;
+        }
+        table th {
+            color: #5a7a5a;
+            font-weight: 600;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        table tr:last-child td { border-bottom: none; }
+        .events-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 280px;
+            overflow-y: auto;
+        }
+        .event-item {
+            padding: 8px 12px;
+            background: #111711;
+            border: 1px solid #1e2e1e;
+            border-radius: 6px;
+            font-size: 12px;
+        }
+        .event-item .ts { color: #5a7a5a; font-size: 11px; }
+        .event-item .cap { color: #d0d0d0; margin-top: 2px; }
+        .logs-box {
+            background: #050805;
+            border: 1px solid #1e2e1e;
+            border-radius: 8px;
+            font-family: "Consolas", "Monaco", monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            padding: 10px;
+            height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .logs-box.short { height: 200px; }
+        .log-line { display: block; padding: 1px 0; }
+        .log-line .lvl { font-weight: 600; padding: 0 6px; }
+        .log-line.INFO .lvl { color: #22c55e; }
+        .log-line.WARNING .lvl { color: #eab308; }
+        .log-line.ERROR .lvl { color: #ef4444; }
+        .log-line.CRITICAL .lvl { color: #ef4444; }
+        .log-line.DEBUG .lvl { color: #707070; }
+        .log-line .lg { color: #6a8a6a; }
+        .log-line .ts { color: #5a7a5a; }
+        .log-line .msg { color: #c0c0c0; }
+        .log-controls {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .log-controls select {
+            padding: 6px 10px;
+            background: #0a0f0a;
+            border: 1px solid #1e2e1e;
+            border-radius: 6px;
+            color: #e0e0e0;
+            font-size: 12px;
+            outline: none;
+        }
+        .log-controls select:focus { border-color: #22c55e; }
+        .log-controls .status {
+            font-size: 11px;
+            color: #5a7a5a;
+            margin-left: auto;
+        }
+        .log-controls .status.live { color: #22c55e; }
+        .empty { color: #404040; font-size: 12px; padding: 12px; text-align: center; }
+        @media (max-width: 900px) {
+            .grid-2, .grid-cam, .grid-motion-streams { grid-template-columns: 1fr; }
+            .header { flex-direction: column; align-items: flex-start; }
+        }
+    </style>
+</head>
+<body>
+<div class="header">
+    <div class="header-left">
+        <span style="font-size:22px">🦎</span>
+        <h1>Gecko Debug</h1>
+    </div>
+    <div class="metrics-bar" id="metrics-bar">
+        <span>uptime <b id="m-uptime">—</b></span>
+        <span>cpu <b id="m-cpu">—</b></span>
+        <span>ram <b id="m-ram">—</b></span>
+        <span>tl <b id="m-tl">—</b></span>
+        <span>db <b id="m-db">—</b></span>
+    </div>
+</div>
+
+<div class="container">
+
+    <!-- 2. Camera -->
+    <details open id="sec-camera">
+        <summary>📷 Camera</summary>
+        <div class="section-body">
+            <div class="grid-cam">
+                <div class="badges" id="cam-badges">
+                    <div class="badge"><span class="dot na" id="b-hls-dot"></span>HLS <code id="b-hls">—</code></div>
+                    <div class="badge"><span class="dot na" id="b-mtx-dot"></span>mediamtx <code id="b-mtx">—</code></div>
+                    <div class="badge">source <code id="b-src">—</code></div>
+                </div>
+                <div class="stream-box">
+                    <span class="stream-label">HLS</span>
+                    <video id="hls-video" autoplay muted playsinline controls></video>
+                </div>
+            </div>
+            <div style="margin-top:14px">
+                <div class="k" style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#5a7a5a;margin-bottom:6px">Recent camera logs</div>
+                <div class="logs-box short" id="logs-camera"></div>
+            </div>
+        </div>
+    </details>
+
+    <!-- 3. Motion -->
+    <details open id="sec-motion">
+        <summary>🏃 Motion</summary>
+        <div class="section-body">
+            <div class="grid-motion-streams">
+                <div class="stream-box">
+                    <span class="stream-label">Raw</span>
+                    <img id="mot-raw" src="/debug/stream/raw" alt="raw">
+                </div>
+                <div class="stream-box">
+                    <span class="stream-label">YOLO</span>
+                    <img id="mot-yolo" src="/debug/stream/yolo" alt="yolo">
+                </div>
+            </div>
+            <div class="info-grid" style="margin-top:14px">
+                <div class="info-item"><div class="k">Monitor</div><div class="v" id="mot-running">—</div></div>
+                <div class="info-item"><div class="k">Warmup</div><div class="v" id="mot-warmup">—</div></div>
+                <div class="info-item"><div class="k">Last motion</div><div class="v" id="mot-last">—</div></div>
+                <div class="info-item"><div class="k">Events 24h</div><div class="v" id="mot-events">—</div></div>
+            </div>
+            <div class="slider-row">
+                <label for="yolo-conf">YOLO conf</label>
+                <input type="range" id="yolo-conf" min="0.1" max="0.95" step="0.05" value="0.8">
+                <span class="val" id="yolo-conf-val">0.50</span>
+            </div>
+            <div class="grid-2">
+                <div>
+                    <div class="k" style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#5a7a5a;margin-bottom:6px">Recent events</div>
+                    <div class="events-list" id="mot-events-list"><div class="empty">loading...</div></div>
+                </div>
+                <div>
+                    <div class="k" style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#5a7a5a;margin-bottom:6px">Recent motion logs</div>
+                    <div class="logs-box short" id="logs-motion"></div>
+                </div>
+            </div>
+        </div>
+    </details>
+
+    <!-- 4. Scheduler -->
+    <details open id="sec-scheduler">
+        <summary>⏰ Scheduler</summary>
+        <div class="section-body">
+            <div class="grid-2">
+                <div>
+                    <div class="k" style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#5a7a5a;margin-bottom:6px">Jobs</div>
+                    <div style="background:#111711;border:1px solid #1e2e1e;border-radius:8px;overflow:hidden;max-height:400px;overflow-y:auto">
+                        <table id="sched-jobs">
+                            <thead><tr><th>id</th><th>next run</th><th>paused</th></tr></thead>
+                            <tbody><tr><td colspan="3" class="empty">loading...</td></tr></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div>
+                    <div class="k" style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#5a7a5a;margin-bottom:6px">Recent scheduler logs</div>
+                    <div class="logs-box short" id="logs-scheduler"></div>
+                </div>
+            </div>
+        </div>
+    </details>
+
+    <!-- 5. Tuya -->
+    <details id="sec-tuya">
+        <summary>🔌 Tuya</summary>
+        <div class="section-body">
+            <div class="logs-box short" id="logs-tuya"></div>
+        </div>
+    </details>
+
+    <!-- 6. Live log feed -->
+    <details id="sec-live">
+        <summary>📜 Live logs</summary>
+        <div class="section-body">
+            <div class="log-controls">
+                <select id="live-service">
+                    <option value="all">All</option>
+                    <option value="motion">motion</option>
+                    <option value="camera">camera</option>
+                    <option value="scheduler">scheduler</option>
+                    <option value="tuya">tuya</option>
+                </select>
+                <span class="status" id="live-status">disconnected</span>
+            </div>
+            <div class="logs-box" id="logs-live"></div>
+        </div>
+    </details>
+
+</div>
+
+<script>
+(function () {
+    "use strict";
+
+    // ───── helpers ─────
+    function fmtUptime(sec) {
+        if (!sec || sec < 0) return "—";
+        sec = Math.floor(sec);
+        const d = Math.floor(sec / 86400);
+        const h = Math.floor((sec % 86400) / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        const parts = [];
+        if (d) parts.push(d + "d");
+        if (h || d) parts.push(h + "h");
+        parts.push(m + "m");
+        return parts.join(" ");
+    }
+    function fmtAgo(iso) {
+        if (!iso) return "never";
+        const t = new Date(iso).getTime();
+        if (!t) return "never";
+        const sec = Math.floor((Date.now() - t) / 1000);
+        if (sec < 60) return sec + "s ago";
+        if (sec < 3600) return Math.floor(sec / 60) + "m ago";
+        if (sec < 86400) return Math.floor(sec / 3600) + "h ago";
+        return Math.floor(sec / 86400) + "d ago";
+    }
+    function fmtTs(epoch) {
+        const d = new Date(epoch * 1000);
+        const pad = (n) => String(n).padStart(2, "0");
+        return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+    }
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, (c) => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+        }[c]));
+    }
+    function renderLogLine(rec) {
+        const lvl = rec.level || "INFO";
+        return '<span class="log-line ' + lvl + '">' +
+            '<span class="ts">' + escapeHtml(fmtTs(rec.ts)) + '</span>' +
+            '<span class="lvl">' + escapeHtml(lvl) + '</span>' +
+            '<span class="lg">' + escapeHtml(rec.logger || "") + '</span> ' +
+            '<span class="msg">' + escapeHtml(rec.msg || "") + '</span>' +
+            '</span>';
+    }
+
+    // ───── 1. metrics polling ─────
+    async function pollMetrics() {
+        try {
+            const r = await fetch("/debug/metrics", { cache: "no-store" });
+            if (!r.ok) return;
+            const m = await r.json();
+
+            document.getElementById("m-uptime").textContent = fmtUptime(m.uptime_sec);
+            document.getElementById("m-cpu").textContent = (m.cpu_percent ?? 0).toFixed(1) + "%";
+            document.getElementById("m-ram").textContent = Math.round(m.ram_mb || 0) + " MB";
+            document.getElementById("m-tl").textContent = Math.round(m.disk?.timelapse_mb || 0) + " MB";
+            document.getElementById("m-db").textContent = Math.round(m.disk?.db_mb || 0) + " MB";
+
+            // camera badges
+            const cam = m.camera || {};
+            const hlsDot = document.getElementById("b-hls-dot");
+            hlsDot.className = "dot " + (cam.hls_running ? "ok" : "err");
+            document.getElementById("b-hls").textContent = cam.hls_running ? ("pid " + (cam.hls_pid ?? "?")) : "stopped";
+            const mtxDot = document.getElementById("b-mtx-dot");
+            mtxDot.className = "dot " + (cam.mediamtx_running ? "ok" : "na");
+            document.getElementById("b-mtx").textContent = cam.mediamtx_running ? ("pid " + (cam.mediamtx_pid ?? "?")) : "off";
+            document.getElementById("b-src").textContent = cam.source_url || "—";
+
+            // motion
+            const mo = m.motion || {};
+            document.getElementById("mot-running").innerHTML =
+                '<span class="dot ' + (mo.running ? "ok" : "err") + '" style="display:inline-block;margin-right:6px"></span>' +
+                (mo.running ? "running" : "stopped");
+            document.getElementById("mot-warmup").textContent = mo.warmup_done ? "done" : "warming";
+            document.getElementById("mot-last").textContent = fmtAgo(mo.last_motion);
+            document.getElementById("mot-events").textContent = mo.events_24h ?? 0;
+
+            // yolo conf slider sync (only if user not actively dragging)
+            const slider = document.getElementById("yolo-conf");
+            if (mo.yolo_conf != null && document.activeElement !== slider) {
+                slider.value = mo.yolo_conf;
+                document.getElementById("yolo-conf-val").textContent = (+mo.yolo_conf).toFixed(2);
+            }
+
+            // scheduler
+            renderJobs(m.scheduler?.jobs || []);
+        } catch (e) {
+            // silent
+        }
+    }
+
+    function renderJobs(jobs) {
+        const tbody = document.querySelector("#sched-jobs tbody");
+        if (!jobs.length) {
+            tbody.innerHTML = '<tr><td colspan="3" class="empty">no jobs</td></tr>';
+            return;
+        }
+        tbody.innerHTML = jobs.map((j) => {
+            const next = j.next_run ? new Date(j.next_run).toLocaleString() : "—";
+            const paused = j.paused ? '<span style="color:#eab308">yes</span>' : '<span style="color:#5a7a5a">no</span>';
+            return "<tr><td><code>" + escapeHtml(j.id) + "</code></td><td>" + escapeHtml(next) + "</td><td>" + paused + "</td></tr>";
+        }).join("");
+    }
+
+    // ───── 2. camera HLS ─────
+    function initHls() {
+        const video = document.getElementById("hls-video");
+        const url = "/hls/stream.m3u8";
+        if (window.Hls && Hls.isSupported()) {
+            const hls = new Hls({ liveSyncDuration: 2, liveMaxLatencyDuration: 5 });
+            hls.loadSource(url);
+            hls.attachMedia(video);
+            hls.on(Hls.Events.ERROR, (_, data) => {
+                if (data.fatal) {
+                    setTimeout(() => { hls.loadSource(url); hls.startLoad(); }, 3000);
+                }
+            });
+        } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+            video.src = url;
+        }
+    }
+
+    // ───── 3. motion: yolo conf ─────
+    const slider = document.getElementById("yolo-conf");
+    const sliderVal = document.getElementById("yolo-conf-val");
+    slider.addEventListener("input", () => {
+        sliderVal.textContent = (+slider.value).toFixed(2);
+    });
+    let confTimer = null;
+    slider.addEventListener("change", () => {
+        const v = +slider.value;
+        if (confTimer) clearTimeout(confTimer);
+        confTimer = setTimeout(async () => {
+            try {
+                await fetch("/debug/yolo-conf", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ conf: v }),
+                });
+            } catch (e) {}
+        }, 100);
+    });
+
+    // ───── motion events ─────
+    async function loadMotionEvents() {
+        try {
+            const r = await fetch("/debug/motion-events?limit=20", { cache: "no-store" });
+            if (!r.ok) return;
+            const events = await r.json();
+            const box = document.getElementById("mot-events-list");
+            if (!events.length) {
+                box.innerHTML = '<div class="empty">no events</div>';
+                return;
+            }
+            box.innerHTML = events.map((e) => {
+                const ts = e.ts ? new Date(e.ts * 1000).toLocaleString() : "—";
+                return '<div class="event-item">' +
+                    '<div class="ts">' + escapeHtml(ts) + '</div>' +
+                    '<div class="cap">' + escapeHtml(e.caption || "") + '</div>' +
+                    '</div>';
+            }).join("");
+        } catch (e) {}
+    }
+
+    // ───── recent logs (per-service, one-shot) ─────
+    async function loadRecentLogs(service, container, limit) {
+        try {
+            const r = await fetch("/debug/logs/recent?service=" + encodeURIComponent(service) + "&limit=" + limit, { cache: "no-store" });
+            if (!r.ok) {
+                container.innerHTML = '<div class="empty">no data</div>';
+                return;
+            }
+            const recs = await r.json();
+            if (!recs.length) {
+                container.innerHTML = '<div class="empty">no logs</div>';
+                return;
+            }
+            container.innerHTML = recs.map(renderLogLine).join("");
+            container.scrollTop = container.scrollHeight;
+        } catch (e) {
+            container.innerHTML = '<div class="empty">error loading logs</div>';
+        }
+    }
+
+    // ───── 6. live log SSE feed ─────
+    let liveES = null;
+    const liveBox = document.getElementById("logs-live");
+    const liveStatus = document.getElementById("live-status");
+    const liveSelect = document.getElementById("live-service");
+    let liveAutoScroll = true;
+    const MAX_LIVE = 200;
+
+    liveBox.addEventListener("scroll", () => {
+        const atBottom = liveBox.scrollHeight - liveBox.scrollTop - liveBox.clientHeight < 30;
+        liveAutoScroll = atBottom;
+    });
+
+    function startLive() {
+        if (liveES) { liveES.close(); liveES = null; }
+        const svc = liveSelect.value;
+        liveBox.innerHTML = "";
+        liveStatus.textContent = "connecting...";
+        liveStatus.className = "status";
+
+        // seed with recent batch
+        loadRecentLogs(svc, liveBox, MAX_LIVE).then(() => {
+            try {
+                liveES = new EventSource("/debug/logs/stream?service=" + encodeURIComponent(svc));
+                liveES.onopen = () => {
+                    liveStatus.textContent = "live";
+                    liveStatus.className = "status live";
+                };
+                liveES.onmessage = (ev) => {
+                    let rec;
+                    try { rec = JSON.parse(ev.data); } catch (e) { return; }
+                    const div = document.createElement("div");
+                    div.innerHTML = renderLogLine(rec);
+                    liveBox.appendChild(div.firstChild);
+                    while (liveBox.childNodes.length > MAX_LIVE) {
+                        liveBox.removeChild(liveBox.firstChild);
+                    }
+                    if (liveAutoScroll) liveBox.scrollTop = liveBox.scrollHeight;
+                };
+                liveES.onerror = () => {
+                    liveStatus.textContent = "reconnecting...";
+                    liveStatus.className = "status";
+                };
+            } catch (e) {
+                liveStatus.textContent = "error";
+            }
+        });
+    }
+    liveSelect.addEventListener("change", startLive);
+
+    // open live section starts the SSE
+    document.getElementById("sec-live").addEventListener("toggle", (e) => {
+        if (e.target.open && !liveES) startLive();
+        if (!e.target.open && liveES) { liveES.close(); liveES = null; liveStatus.textContent = "disconnected"; liveStatus.className = "status"; }
+    });
+
+    // ───── boot ─────
+    initHls();
+    pollMetrics();
+    setInterval(pollMetrics, 3000);
+    loadMotionEvents();
+    setInterval(loadMotionEvents, 30000);
+    loadRecentLogs("camera", document.getElementById("logs-camera"), 20);
+    loadRecentLogs("motion", document.getElementById("logs-motion"), 30);
+    loadRecentLogs("scheduler", document.getElementById("logs-scheduler"), 20);
+    loadRecentLogs("tuya", document.getElementById("logs-tuya"), 20);
+})();
+</script>
+</body>
+</html>

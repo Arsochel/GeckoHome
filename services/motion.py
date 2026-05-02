@@ -20,10 +20,13 @@ from config import (
     MOTION_THRESHOLD, MOTION_MIN_AREA, MOTION_TIMEOUT, MOTION_DEBUG,
 )
 from database import save_photo, add_motion_event, set_gecko_state, log_gecko_zone, update_motion_photo, DB_PATH, get_blocked_user_ids
+from services.yolo import get_model as _get_yolo
 from services.zones import detect_zone, ZONE_W, ZONE_H
 
 _last_motion_time: datetime | None = None
 _motion_lock = threading.Lock()
+
+yolo_debug_conf: float = 0.8  # пороговый conf для дебаг-стрима, меняется через POST /debug/yolo-conf
 
 
 def get_last_motion_time() -> datetime | None:
@@ -43,37 +46,6 @@ _TG_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}" if TELEGRAM_BOT_T
 
 def _tg_url(method: str) -> str:
     return f"{_TG_BASE}/{method}"
-
-
-async def _send_photo_with_approval(photo_bytes: bytes, caption: str) -> str | None:
-    """Send photo to super admin with Опубликовать/Пропустить buttons. Returns photo_file_id."""
-    blocked = await get_blocked_user_ids()
-    _motion_recipients = (TELEGRAM_SUPER_ADMINS | TELEGRAM_ADMINS) - blocked
-    if not TELEGRAM_BOT_TOKEN or not _motion_recipients:
-        return None
-    event_id = await add_motion_event("", caption)
-    keyboard = json.dumps({"inline_keyboard": [[
-        {"text": "✅ Опубликовать", "callback_data": f"motion_pub_{event_id}"},
-        {"text": "❌ Пропустить",   "callback_data": f"motion_skip_{event_id}"},
-    ]]})
-    file_id = None
-    for admin_id in _motion_recipients:
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(
-                    _tg_url("sendPhoto"),
-                    data={"chat_id": admin_id, "caption": caption,
-                          "reply_markup": keyboard},
-                    files={"photo": ("motion.jpg", photo_bytes, "image/jpeg")},
-                )
-            data = resp.json()
-            if data.get("ok") and file_id is None:
-                file_id = data["result"]["photo"][-1]["file_id"]
-                await update_motion_photo(event_id, file_id)
-                log.info("photo sent, event_id=%s", event_id)
-        except Exception as e:
-            log.error("photo send error: %s", e)
-    return file_id
 
 
 async def _send_telegram_video(video_path: str, caption: str):
@@ -121,29 +93,17 @@ def _compile_video_sync(snapshot_paths: list[str]) -> str | None:
     finally:
         try:
             os.unlink(list_path)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("concat list unlink: %s", e)
 
     if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
         return out_path
     log.error("ffmpeg error:\n%s", result.stderr.decode()[-300:])
     try:
         os.unlink(out_path)
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("ffmpeg out unlink: %s", e)
     return None
-
-
-_yolo_model = None
-
-
-def _get_yolo():
-    global _yolo_model
-    if _yolo_model is None and YOLO_MODEL_PATH and os.path.exists(YOLO_MODEL_PATH):
-        from ultralytics import YOLO
-        _yolo_model = YOLO(YOLO_MODEL_PATH)
-        log.info("YOLO loaded: %s", YOLO_MODEL_PATH)
-    return _yolo_model
 
 
 class MotionMonitor:
@@ -152,9 +112,21 @@ class MotionMonitor:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stop_event = threading.Event()
         self._latest_frame = None
+        self._debug_frame = None
+        self._warmup_done = False
 
     def get_latest_frame(self):
         return self._latest_frame
+
+    def get_debug_frame(self):
+        """Returns annotated frame with MOG2 contours; falls back to latest frame."""
+        return self._debug_frame if self._debug_frame is not None else self._latest_frame
+
+    def get_warmup_done(self) -> bool:
+        return self._warmup_done
+
+    def is_running(self) -> bool:
+        return self._loop is not None and not self._stop_event.is_set()
 
     async def start(self):
         if not CAMERA_RTSP_URL:
@@ -240,14 +212,17 @@ class MotionMonitor:
 
                 # MOG2 нужно ~30 кадров чтобы выучить фон — в этот период не детектим
                 warmup_frames += 1
+                if warmup_frames > 30:
+                    self._warmup_done = True
                 motion = len(big_contours) > 0 and warmup_frames > 30
 
+                debug = frame.copy()
+                cv2.drawContours(debug, big_contours, -1, (0, 255, 0), 2)
+                max_area = int(max((cv2.contourArea(c) for c in contours), default=0))
+                label = f"MOTION area={int(max((cv2.contourArea(c) for c in big_contours), default=0))}" if motion else f"quiet max={max_area} {'(warmup)' if warmup_frames <= 30 else ''}"
+                cv2.putText(debug, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0) if motion else (100, 100, 100), 2)
+                self._debug_frame = debug
                 if MOTION_DEBUG:
-                    debug = frame.copy()
-                    cv2.drawContours(debug, big_contours, -1, (0, 255, 0), 2)
-                    max_area = int(max((cv2.contourArea(c) for c in contours), default=0))
-                    label = f"MOTION area={int(max((cv2.contourArea(c) for c in big_contours), default=0))}" if motion else f"quiet max={max_area} {'(warmup)' if warmup_frames <= 30 else ''}"
-                    cv2.putText(debug, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0) if motion else (100, 100, 100), 2)
                     cv2.imwrite(_DEBUG_FRAME_PATH, debug)
 
                 now = time.monotonic()
@@ -292,8 +267,8 @@ class MotionMonitor:
                         for p in captured:
                             try:
                                 os.unlink(p)
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                log.debug("snapshot unlink: %s", e)
 
                 # YOLO зональная детекция каждые YOLO_INTERVAL секунд
                 if now - last_yolo_t >= YOLO_INTERVAL:
@@ -303,7 +278,7 @@ class MotionMonitor:
                         try:
                             zoomed = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
                             zoomed = cv2.resize(zoomed, (ZONE_W, ZONE_H))
-                            results = model(zoomed, verbose=False, conf=0.4)[0]
+                            results = model(zoomed, verbose=False, conf=0.8)[0]
                             if results.boxes:
                                 box = max(results.boxes, key=lambda b: float(b.conf[0]))
                                 x1, y1, x2, y2 = map(int, box.xyxy[0])
@@ -332,8 +307,8 @@ class MotionMonitor:
                 await _send_telegram_video(video_path, "🦎 Движение!")
                 try:
                     os.unlink(video_path)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("clip unlink: %s", e)
             else:
                 log.warning("clip failed")
         except Exception as e:
@@ -357,8 +332,8 @@ class MotionMonitor:
             for p in snapshot_paths:
                 try:
                     os.unlink(p)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("process snap unlink: %s", e)
 
 
 monitor = MotionMonitor()
