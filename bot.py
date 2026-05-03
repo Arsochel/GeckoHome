@@ -62,6 +62,10 @@ async def main():
         Application.builder()
         .token(TELEGRAM_BOT_TOKEN)
         .concurrent_updates(True)
+        .connect_timeout(10)
+        .read_timeout(30)
+        .write_timeout(30)
+        .pool_timeout(10)
         .build()
     )
     app.add_handler(CommandHandler("start", cmd_start))
@@ -91,7 +95,13 @@ async def main():
             signal.signal(sig, lambda s, f: stop_event.set())
 
     await app.start()
-    await app.updater.start_polling(drop_pending_updates=False, allowed_updates=["message", "callback_query"])
+    await app.updater.start_polling(
+        drop_pending_updates=False,
+        allowed_updates=["message", "callback_query"],
+        timeout=20,
+        read_timeout=30,
+        connect_timeout=10,
+    )
 
     asyncio.create_task(_log_server())
 
