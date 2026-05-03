@@ -359,6 +359,17 @@ async def log_sensor_reading(temperature: float | None, humidity: float | None):
         )
 
 
+async def get_last_sensor_reading() -> tuple[float | None, float | None]:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT temperature, humidity FROM sensor_readings ORDER BY id DESC LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None, None
+    return row["temperature"], row["humidity"]
+
+
 # ── Users ──
 
 async def get_allowed_users() -> list[dict]:

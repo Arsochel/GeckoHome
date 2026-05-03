@@ -14,7 +14,7 @@ import httpx
 from services import tuya
 from services.highlights import update_gecko_state
 from services.timelapse import capture_timelapse_frame, generate_and_send_timelapse, generate_and_send_timelapse_preview
-from database import get_schedules, save_schedule, log_lamp_event, log_sensor_reading, get_last_feeding_cached, purge_old_photos, purge_lamp_events, get_next_feeding_supplements, get_last_cricket_purchase, get_alert_message, save_alert_message, delete_alert_message, set_user_blocked, get_blocked_user_ids, get_last_feeding_db, purge_expired_debug_tokens, get_gecko_birthday
+from database import get_schedules, save_schedule, log_lamp_event, log_sensor_reading, get_last_feeding_cached, purge_old_photos, purge_lamp_events, get_next_feeding_supplements, get_last_cricket_purchase, get_alert_message, save_alert_message, delete_alert_message, set_user_blocked, get_blocked_user_ids, get_last_feeding_db, purge_expired_debug_tokens, get_gecko_birthday, get_cricket_remaining
 from config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS,
     TEMP_ALERT_MIN, TEMP_ALERT_MAX, HUM_ALERT_MIN, HUM_ALERT_MAX, FEEDING_ALERT_DAYS,
@@ -142,6 +142,13 @@ async def check_feeding_alert():
     days = (datetime.now().date() - last.date()).days
     if days < FEEDING_ALERT_DAYS:
         return
+
+    crickets_remaining = await get_cricket_remaining()
+    now_hour = datetime.now().hour
+    min_hour = 10 if crickets_remaining == 0 else 20
+    if now_hour < min_hour:
+        return
+
     supplements = await get_next_feeding_supplements()
     text = f"🍎 *Пора кормить геккона!* (не ел *{days} д.*)"
     if "vitamins" in supplements:
@@ -149,13 +156,19 @@ async def check_feeding_alert():
     if "hornworm" in supplements:
         text += "\n🐛 Дать *табачного бражника*"
     text += "\n🦗 Покорми сверчков сегодня — через 2 дня готовы"
-    row = [
-        {"text": "🍎 Покормил", "callback_data": "alert_fed"},
-        {"text": "🦗 Купил сверчков", "callback_data": "alert_cricket"},
-    ]
+
+    rows = [[{"text": "🍎 Покормил", "callback_data": "alert_fed"}]]
+    event_row = []
+    if "vitamins" in supplements:
+        event_row.append({"text": "💊 Дал витамины", "callback_data": "alert_vitamins"})
     if "hornworm" in supplements:
-        row.append({"text": "🐛 Дал бражника", "callback_data": "alert_hornworm"})
-    markup = {"inline_keyboard": [row]}
+        event_row.append({"text": "🐛 Дал бражника", "callback_data": "alert_hornworm"})
+    if event_row:
+        rows.append(event_row)
+    if crickets_remaining == 0:
+        rows.append([{"text": "🦗 Купил сверчков", "callback_data": "alert_cricket"}])
+
+    markup = {"inline_keyboard": rows}
     blocked = await get_blocked_user_ids()
     for uid in TELEGRAM_SUPER_ADMINS - blocked:
         await _send_or_edit_alert(uid, "feeding", text, markup)
@@ -297,6 +310,7 @@ async def _recover_lamps(schedules: list[dict]):
 
 
 async def load_schedules():
+    await tuya.warm_sensor_cache()
     saved = await get_schedules()
     if not saved:
         default_id = "uv_lamp_midnight"

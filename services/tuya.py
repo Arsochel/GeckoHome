@@ -5,6 +5,12 @@ import time
 import tinytuya
 from config import DEVICE_IDS, DEVICE_LOCAL, TUYA_CLOUD_KEY, TUYA_CLOUD_SECRET, TUYA_CLOUD_REGION
 
+_lamp_cache: dict[str, dict] = {}  # lamp_type → {"switch": bool|None, "online": bool|None, "ts": float}
+_LAMP_CACHE_TTL = 15  # seconds
+
+_sensor_value_cache: dict[str, dict] = {}  # "sensor_type:code" → {"value": any, "ts": float}
+_SENSOR_CACHE_TTL = 120  # seconds — заполняется планировщиком каждые 30 мин
+
 log = logging.getLogger(__name__)
 
 _cloud = None
@@ -110,6 +116,19 @@ def _notify_thermometer_online(temp, hum):
     threading.Thread(target=_send, daemon=True).start()
 
 
+async def warm_sensor_cache():
+    """Заполняет кэш сенсоров из последней записи в БД — чтобы первый /start был мгновенным."""
+    from database import get_last_sensor_reading
+    temp, hum = await get_last_sensor_reading()
+    if temp is not None:
+        _sensor_value_cache["thermometer:va_temperature"] = {"value": temp, "ts": time.time()}
+    if hum is not None:
+        _sensor_value_cache["thermometer:va_humidity"] = {"value": hum, "ts": time.time()}
+        _sensor_value_cache["humidifier:va_humidity"] = {"value": hum, "ts": time.time()}
+    if temp is not None or hum is not None:
+        log.info("sensor cache warmed from DB: temp=%s hum=%s", temp, hum)
+
+
 def start_listener():
     global _listener_started
     with _listener_lock:
@@ -148,7 +167,7 @@ def _outlet(device_type: str):
             version=info.get("version", "3.4"),
         )
         d.set_socketRetryLimit(1)
-        d.set_socketTimeout(3)
+        d.set_socketTimeout(1)
         return d
     except Exception as e:
         log.error("init %s error: %s", device_type, e)
@@ -168,7 +187,7 @@ def _device(device_type: str):
             version=info.get("version", "3.3"),
         )
         d.set_socketRetryLimit(1)
-        d.set_socketTimeout(3)
+        d.set_socketTimeout(1)
         return d
     except Exception as e:
         log.error("init %s error: %s", device_type, e)
@@ -176,6 +195,9 @@ def _device(device_type: str):
 
 
 def get_lamp_status(lamp_type: str) -> dict:
+    cached = _lamp_cache.get(lamp_type)
+    if cached and time.time() - cached["ts"] < _LAMP_CACHE_TTL:
+        return {"online": cached["online"], "switch": cached["switch"]}
     d = _outlet(f"{lamp_type}_lamp")
     if not d:
         return {"online": None, "switch": None}
@@ -183,8 +205,11 @@ def get_lamp_status(lamp_type: str) -> dict:
         result = d.status()
         if result.get("Error"):
             log.warning("status %s: %s", lamp_type, result["Error"])
+            entry = {"online": False, "switch": None, "ts": time.time()}
+            _lamp_cache[lamp_type] = entry
             return {"online": False, "switch": None}
         switch = result.get("dps", {}).get("1")
+        _lamp_cache[lamp_type] = {"online": True, "switch": switch, "ts": time.time()}
         return {"online": True, "switch": switch}
     except Exception as e:
         log.error("status %s error: %s", lamp_type, e)
@@ -216,9 +241,15 @@ def _get_sensor_cloud(device_id: str, code: str):
 
 
 def get_sensor(sensor_type: str, code: str):
+    cache_key = f"{sensor_type}:{code}"
+    # 0. short-term in-memory cache (заполняется каждые 30 мин планировщиком)
+    cached = _sensor_value_cache.get(cache_key)
+    if cached and time.time() - cached["ts"] < _SENSOR_CACHE_TTL:
+        return cached["value"]
     # 1. local broadcast cache (если поймали broadcast)
     val = get_sensor_cached(sensor_type, code)
     if val is not None:
+        _sensor_value_cache[cache_key] = {"value": val, "ts": time.time()}
         return val
     # 2. direct local LAN (для постоянно включённых устройств)
     d = _device(sensor_type)
@@ -230,12 +261,16 @@ def get_sensor(sensor_type: str, code: str):
                 if dps_key:
                     val = result.get("dps", {}).get(dps_key)
                     if val is not None:
+                        _sensor_value_cache[cache_key] = {"value": val, "ts": time.time()}
                         return val
         except Exception as e:
             log.error("sensor %s local error: %s", sensor_type, e)
     # 3. cloud (основной для батарейных устройств)
     device_id = DEVICE_IDS.get(sensor_type, "")
-    return _get_sensor_cloud(device_id, code)
+    val = _get_sensor_cloud(device_id, code)
+    if val is not None:
+        _sensor_value_cache[cache_key] = {"value": val, "ts": time.time()}
+    return val
 
 
 def switch_lamp(lamp_type: str, on: bool) -> bool:
@@ -248,6 +283,7 @@ def switch_lamp(lamp_type: str, on: bool) -> bool:
             log.warning("switch_lamp(%s, %s): %s", lamp_type, on, result["Error"])
             return False
         log.info("switch_lamp(%s, %s): OK", lamp_type, on)
+        _lamp_cache[lamp_type] = {"online": True, "switch": on, "ts": time.time()}
         return True
     except Exception as e:
         log.error("switch_lamp(%s, %s) error: %s", lamp_type, on, e)

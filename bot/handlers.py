@@ -55,12 +55,6 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
         return
     await update_user_info(user.id, user.username, user.first_name)
-    # убираем reply keyboard если была
-    try:
-        tmp = await update.message.reply_text(".", reply_markup=ReplyKeyboardRemove())
-        await tmp.delete()
-    except Exception:
-        pass
     # показываем выбор языка если ещё не выбран
     existing_lang = await get_user_lang(user.id)
     if existing_lang is None:
@@ -74,8 +68,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
     lang = existing_lang
-    text = await status_text(lang) if is_super_admin(user.id) else await user_status_text(lang)
-    kb = await main_keyboard(user.id)
+    text_coro = status_text(lang) if is_super_admin(user.id) else user_status_text(lang)
+    text, kb = await asyncio.gather(text_coro, main_keyboard(user.id))
     # удаляем команду /start из чата
     try:
         await update.message.delete()
@@ -90,6 +84,9 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pass
     msg = await ctx.bot.send_message(update.effective_chat.id, text, parse_mode="Markdown", reply_markup=kb)
     ctx.user_data["status_msg_id"] = msg.message_id
+    from services.scheduler import check_feeding_alert, check_cricket_alert
+    asyncio.create_task(check_feeding_alert())
+    asyncio.create_task(check_cricket_alert())
 
 
 async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -102,7 +99,8 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
     lang = await get_lang(user.id)
-    text = await status_text(lang) if is_super_admin(user.id) else await user_status_text(lang)
+    text_coro = status_text(lang) if is_super_admin(user.id) else user_status_text(lang)
+    text, kb = await asyncio.gather(text_coro, main_keyboard(user.id))
     # удаляем старое главное сообщение и шлём новое последним
     prev_id = ctx.user_data.get("status_msg_id")
     if prev_id:
@@ -110,7 +108,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await ctx.bot.delete_message(update.effective_chat.id, prev_id)
         except Exception:
             pass
-    msg = await ctx.bot.send_message(update.effective_chat.id, text, parse_mode="Markdown", reply_markup=await main_keyboard(user.id))
+    msg = await ctx.bot.send_message(update.effective_chat.id, text, parse_mode="Markdown", reply_markup=kb)
     ctx.user_data["status_msg_id"] = msg.message_id
 
 
@@ -282,8 +280,16 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return await _handle_alert_fed_cancel(query)
     if data == "alert_cricket" and is_super_admin(user_id):
         return await _handle_alert_cricket(query, user_id)
+    if data.startswith("alert_cricket_count_") and is_super_admin(user_id):
+        try:
+            count = int(data.split("_")[-1])
+        except ValueError:
+            return
+        return await _handle_alert_cricket_count(query, user_id, count)
     if data == "alert_hornworm" and is_super_admin(user_id):
         return await _handle_alert_hornworm(query, user_id)
+    if data == "alert_vitamins" and is_super_admin(user_id):
+        return await _handle_alert_vitamins(query, user_id)
 
     # Motion approval
     if data.startswith("motion_pub_") and is_super_admin(user_id):
@@ -406,15 +412,15 @@ async def _handle_deny(query, ctx, data):
 async def _handle_refresh(query, ctx, user_id):
     try:
         lang = await get_lang(user_id)
-        text = await status_text(lang) if is_super_admin(user_id) else await user_status_text(lang)
-        kb = await main_keyboard(user_id)
+        text_coro = status_text(lang) if is_super_admin(user_id) else user_status_text(lang)
+        text, kb = await asyncio.gather(text_coro, main_keyboard(user_id))
         await _replace_main(query, ctx, user_id, text, kb)
     except Exception:
         pass
 
 
 async def _handle_lamp(query, user_id, lamp, on):
-    ok = tuya.switch_lamp(lamp, on)
+    ok = await asyncio.to_thread(tuya.switch_lamp, lamp, on)
     word = "ON" if on else "OFF"
     lamp_name = "UV" if lamp == "uv" else "Тепловая"
     state = "включена" if on else "выключена"
@@ -426,9 +432,10 @@ async def _handle_lamp(query, user_id, lamp, on):
     await asyncio.sleep(1)
     try:
         lang = await get_lang(user_id)
+        text, kb = await asyncio.gather(status_text(lang), main_keyboard(user_id))
         await _safe_edit(query,
-            await status_text(lang) + f"\n\n{result}",
-            parse_mode="Markdown", reply_markup=await main_keyboard(user_id),
+            text + f"\n\n{result}",
+            parse_mode="Markdown", reply_markup=kb,
         )
     except Exception:
         pass
@@ -436,16 +443,28 @@ async def _handle_lamp(query, user_id, lamp, on):
 
 async def _bump_alerts(ctx, user_id: int):
     """Пересылает активные алерты вниз (после главного сообщения)."""
+    from database import get_cricket_remaining, get_next_feeding_supplements
+    crickets_remaining = await get_cricket_remaining()
+    supplements = await get_next_feeding_supplements()
+
+    feeding_rows = [[InlineKeyboardButton("🍎 Покормил", callback_data="alert_fed")]]
+    event_row = []
+    if "vitamins" in supplements:
+        event_row.append(InlineKeyboardButton("💊 Дал витамины", callback_data="alert_vitamins"))
+    if "hornworm" in supplements:
+        event_row.append(InlineKeyboardButton("🐛 Дал бражника", callback_data="alert_hornworm"))
+    if event_row:
+        feeding_rows.append(event_row)
+    if crickets_remaining == 0:
+        feeding_rows.append([InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket")])
+
     alert_defs = {
-        "feeding": ("🔴 *Пора кормить!*", [
-            InlineKeyboardButton("🍎 Покормил", callback_data="alert_fed"),
-            InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket"),
-        ]),
+        "feeding": ("🔴 *Пора кормить!*", feeding_rows),
         "cricket": ("🔴 *Сверчки закончились!*\nКупи новую партию.", [
-            InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket"),
+            [InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket")],
         ]),
     }
-    for alert_type, (text, buttons) in alert_defs.items():
+    for alert_type, (text, rows) in alert_defs.items():
         msg_id = await get_alert_message(user_id, alert_type)
         if not msg_id:
             continue
@@ -456,7 +475,7 @@ async def _bump_alerts(ctx, user_id: int):
         try:
             sent = await ctx.bot.send_message(
                 chat_id=user_id, text=text, parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([buttons]),
+                reply_markup=InlineKeyboardMarkup(rows),
             )
             await save_alert_message(user_id, alert_type, sent.message_id)
             await set_user_blocked(user_id, False)
@@ -505,10 +524,9 @@ async def _handle_snapshot(query, user_id, ctx):
     log.info("snapshot requested by @%s (%s)", u.username or u.first_name, u.id)
     await log_user_action(u.id, u.username or u.first_name, "snapshot")
     await _safe_edit(query, "📸 Делаю снимок...")
-    path = await camera.snapshot()
-    lang = await get_lang(user_id)
-    text = await status_text(lang) if is_super_admin(user_id) else await user_status_text(lang)
-    kb = await main_keyboard(user_id)
+    lang, path = await asyncio.gather(get_lang(user_id), camera.snapshot())
+    text_coro = status_text(lang) if is_super_admin(user_id) else user_status_text(lang)
+    text, kb = await asyncio.gather(text_coro, main_keyboard(user_id))
     err_msg = "❌ Failed to take snapshot" if lang == "en" else "❌ Не удалось сделать снимок"
     if path:
         try:
@@ -533,10 +551,9 @@ async def _handle_clip(query, user_id, duration: int = 30, ctx=None):
     log.info("clip %s requested by @%s (%s)", label, u.username or u.first_name, u.id)
     await log_user_action(u.id, u.username or u.first_name, f"clip_{duration}")
     await _safe_edit(query, f"🎬 Записываю {label}...")
-    path = await camera.clip(duration)
-    lang = await get_lang(user_id)
-    text = await status_text(lang) if is_super_admin(user_id) else await user_status_text(lang)
-    kb = await main_keyboard(user_id)
+    lang, path = await asyncio.gather(get_lang(user_id), camera.clip(duration))
+    text_coro = status_text(lang) if is_super_admin(user_id) else user_status_text(lang)
+    text, kb = await asyncio.gather(text_coro, main_keyboard(user_id))
     err_msg = "❌ Failed to record clip" if lang == "en" else "❌ Не удалось записать клип"
     if path:
         try:
@@ -918,43 +935,115 @@ async def _handle_alert_fed(query, user_id):
 
 
 async def _handle_alert_fed_count(query, user_id, count: int):
-    supplements = await get_next_feeding_supplements()
-    await log_feeding(crickets=count, vitamins="vitamins" in supplements, hornworm="hornworm" in supplements)
+    supplements = await get_next_feeding_supplements()  # до логирования
+    await log_feeding(crickets=count)
     confirm = f"✅ Записано! Дал {count} сверчков." if await get_lang(user_id) == "ru" else f"✅ Fed {count} crickets!"
     await query.answer(confirm, show_alert=True)
-    await delete_alert_message(user_id, "feeding")
+
+    from database import get_cricket_remaining
+    crickets_remaining = await get_cricket_remaining()
+
+    event_row = []
+    if "vitamins" in supplements:
+        event_row.append(InlineKeyboardButton("💊 Дал витамины", callback_data="alert_vitamins"))
+    if "hornworm" in supplements:
+        event_row.append(InlineKeyboardButton("🐛 Дал бражника", callback_data="alert_hornworm"))
+
+    rows = []
+    if event_row:
+        rows.append(event_row)
+    if crickets_remaining == 0:
+        rows.append([InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket")])
+
+    if rows:
+        try:
+            await query.edit_message_text(
+                "🍎 *Покормил!*\n\nЕщё что отметить?", parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(rows),
+            )
+            await save_alert_message(user_id, "feeding", query.message.message_id)
+        except Exception:
+            await delete_alert_message(user_id, "feeding")
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+    else:
+        await delete_alert_message(user_id, "feeding")
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+
+async def _handle_alert_fed_cancel(query):
+    """Восстанавливаем оригинальные кнопки алерта (пользователь передумал)."""
+    from database import get_cricket_remaining, get_last_feeding_db
+    supplements = await get_next_feeding_supplements()
+    crickets_remaining = await get_cricket_remaining()
+    last = await get_last_feeding_db()
+    days = (datetime.now().date() - last.date()).days if last else 0
+
+    text = f"🍎 *Пора кормить геккона!* (не ел *{days} д.*)"
+    if "vitamins" in supplements:
+        text += "\n💊 Это кормление *с витаминами*"
+    if "hornworm" in supplements:
+        text += "\n🐛 Дать *табачного бражника*"
+    text += "\n🦗 Покорми сверчков сегодня — через 2 дня готовы"
+
+    rows = [[InlineKeyboardButton("🍎 Покормил", callback_data="alert_fed")]]
+    event_row = []
+    if "vitamins" in supplements:
+        event_row.append(InlineKeyboardButton("💊 Дал витамины", callback_data="alert_vitamins"))
+    if "hornworm" in supplements:
+        event_row.append(InlineKeyboardButton("🐛 Дал бражника", callback_data="alert_hornworm"))
+    if event_row:
+        rows.append(event_row)
+    if crickets_remaining == 0:
+        rows.append([InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket")])
+
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+    except Exception:
+        pass
+
+
+async def _handle_alert_cricket(query, user_id):
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("20 шт.", callback_data="alert_cricket_count_20"),
+        InlineKeyboardButton("30 шт.", callback_data="alert_cricket_count_30"),
+    ]])
+    try:
+        await query.edit_message_reply_markup(reply_markup=markup)
+    except Exception:
+        pass
+
+
+async def _handle_alert_cricket_count(query, user_id, count: int):
+    await log_cricket_purchase(count)
+    await query.answer(f"🦗 Куплено {count} сверчков!")
+    msg_id = query.message.message_id
+    for alert_type in ("cricket", "feeding"):
+        stored = await get_alert_message(user_id, alert_type)
+        if stored == msg_id:
+            await delete_alert_message(user_id, alert_type)
+            break
     try:
         await query.message.delete()
     except Exception:
         pass
 
 
-async def _handle_alert_fed_cancel(query):
-    """Восстанавливаем оригинальные кнопки алерта (пользователь передумал)."""
-    supplements = await get_next_feeding_supplements()
-    row = [
-        InlineKeyboardButton("🍎 Покормил", callback_data="alert_fed"),
-        InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket"),
-    ]
-    if "hornworm" in supplements:
-        row.append(InlineKeyboardButton("🐛 Дал бражника", callback_data="alert_hornworm"))
-    markup = InlineKeyboardMarkup([row])
-    try:
-        await query.edit_message_text("🔴 *Пора кормить!*", parse_mode="Markdown", reply_markup=markup)
-    except Exception:
-        pass
-
-
-async def _handle_alert_cricket(query, user_id):
-    await log_cricket_purchase()
-    await query.answer("🦗 Сверчки записаны!")
-    await _remove_alert_button(query, user_id, "alert_cricket", "cricket")
-
-
 async def _handle_alert_hornworm(query, user_id):
     await append_feeding_note("hornworm")
     await query.answer("🐛 Бражник записан!")
     await _remove_alert_button(query, user_id, "alert_hornworm", "feeding")
+
+
+async def _handle_alert_vitamins(query, user_id):
+    await append_feeding_note("vitamins")
+    await query.answer("💊 Витамины записаны!")
+    await _remove_alert_button(query, user_id, "alert_vitamins", "feeding")
 
 
 async def _handle_motion_pub(query, ctx, event_id: int):

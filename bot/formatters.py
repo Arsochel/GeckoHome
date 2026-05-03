@@ -136,8 +136,12 @@ def _feeding_line(lang: str) -> str:
 
 
 async def user_status_text(lang: str = "ru") -> str:
-    temp = await asyncio.to_thread(tuya.get_sensor, "thermometer", "va_temperature")
-    hum  = await asyncio.to_thread(tuya.get_sensor, "humidifier", "va_humidity") or await asyncio.to_thread(tuya.get_sensor, "thermometer", "va_humidity")
+    temp, hum = await asyncio.gather(
+        asyncio.to_thread(tuya.get_sensor, "thermometer", "va_temperature"),
+        asyncio.to_thread(tuya.get_sensor, "humidifier", "va_humidity"),
+    )
+    if hum is None:
+        hum = await asyncio.to_thread(tuya.get_sensor, "thermometer", "va_humidity")
     now  = datetime.now().strftime("%H:%M:%S")
 
     temp_str = f"{temp / 10:.1f}°C" if temp is not None else "—"
