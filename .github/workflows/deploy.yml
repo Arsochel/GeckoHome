@@ -1,0 +1,23 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Pull latest code
+        run: |
+          git config --global --add safe.directory C:/Users/artem/Desktop/GeckoHome
+          Set-Location "C:\Users\artem\Desktop\GeckoHome"
+          git pull origin main
+
+      - name: Install dependencies
+        run: |
+          Set-Location "C:\Users\artem\Desktop\GeckoHome"
+          .venv\Scripts\python.exe -m pip install -r requirements.txt
+
+      - name: Restart services
+        run: schtasks /run /tn "GeckoRestart"
