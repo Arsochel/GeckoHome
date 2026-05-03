@@ -9,8 +9,8 @@ services:
     env_file: .env
     environment:
       MEDIAMTX_BIN: /usr/local/bin/mediamtx
-      # YOLO model: положи веса в models/gecko_yolo.pt
       YOLO_MODEL_PATH: /app/models/gecko_yolo.pt
+      TZ: Europe/Moscow
     restart: unless-stopped
 
   bot:
@@ -21,6 +21,7 @@ services:
     env_file: .env
     environment:
       YOLO_MODEL_PATH: /app/models/gecko_yolo.pt
+      TZ: Europe/Moscow
     restart: unless-stopped
     depends_on:
       - app

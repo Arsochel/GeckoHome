@@ -39,7 +39,7 @@ async def debug_page(request: Request, token: str | None = None):
         request.session["debug_user"] = user_id
         return RedirectResponse(url="/debug", status_code=303)
     _require_debug(request)
-    return templates.TemplateResponse("debug.html", {"request": request})
+    return templates.TemplateResponse(request, "debug.html")
 
 
 @router.get("/debug/stream/raw")

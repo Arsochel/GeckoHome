@@ -81,7 +81,7 @@ async def favicon():
 
 @app.get("/stream", response_class=HTMLResponse)
 async def stream_page(request: Request):
-    return _templates.TemplateResponse("stream.html", {"request": request})
+    return _templates.TemplateResponse(request, "stream.html")
 
 
 @app.get("/api/stream/live.mjpeg")

@@ -39,7 +39,7 @@ async def verify_csrf(request: Request):
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse(request, "login.html")
 
 
 @router.post("/login")
@@ -52,11 +52,11 @@ async def login(request: Request, username: str = Form(...), password: str = For
         )
     except Exception as e:
         log.error("bcrypt.checkpw failed: %s", e)
-        return templates.TemplateResponse("login.html", {"request": request, "error": f"Auth error: {e}"})
+        return templates.TemplateResponse(request, "login.html", {"error": f"Auth error: {e}"})
     if ok:
         request.session["user"] = username
         return RedirectResponse(url="/admin", status_code=303)
-    return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid credentials"})
+    return templates.TemplateResponse(request, "login.html", {"error": "Invalid credentials"})
 
 
 @router.get("/logout")

@@ -65,8 +65,7 @@ async def admin_page(request: Request, user: str = Depends(get_current_user)):
             online = tuya.get_sensor(key, "va_temperature" if key == "thermometer" else "va_humidity") is not None
         devices.append({"name": _DEVICE_LABELS.get(key, key), "id": device_id, "online": online})
 
-    return templates.TemplateResponse("admin.html", {
-        "request":      request,
+    return templates.TemplateResponse(request, "admin.html", {
         "temperature":  temp,
         "humidity":     hum,
         "uv_status":    uv_status,
