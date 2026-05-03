@@ -4,20 +4,24 @@ on:
   push:
     branches: [main]
 
+env:
+  PROJECT_DIR: ${{ vars.PROJECT_DIR }}
+
 jobs:
   deploy:
     runs-on: self-hosted
     steps:
       - name: Pull latest code
         run: |
-          git config --global --add safe.directory C:/Users/artem/Desktop/GeckoHome
-          Set-Location "C:\Users\artem\Desktop\GeckoHome"
-          git pull origin main
+          $dir = "$env:PROJECT_DIR".Trim()
+          $gitCmd = (where.exe git 2>$null | Select-Object -First 1)
+          if (-not $gitCmd) { $gitCmd = "C:\Program Files\Git\cmd\git.exe" }
+          & $gitCmd config --global --add safe.directory ($dir -replace '\\','/')
+          Set-Location $dir
+          & $gitCmd pull origin main
 
-      - name: Install dependencies
+      - name: Deploy with Docker Compose
         run: |
-          Set-Location "C:\Users\artem\Desktop\GeckoHome"
-          .venv\Scripts\python.exe -m pip install -r requirements.txt
-
-      - name: Restart services
-        run: schtasks /run /tn "GeckoRestart"
+          $dir = "$env:PROJECT_DIR".Trim()
+          $wslDir = "/mnt/" + ($dir[0].ToString().ToLower()) + "/" + ($dir.Substring(3) -replace '\\', '/')
+          wsl -d Ubuntu -u root -- bash -c "service docker start; cd $wslDir && docker compose up --build -d"

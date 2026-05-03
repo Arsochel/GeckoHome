@@ -29,12 +29,16 @@ GeckoHome/
 │   ├── motion.py         # OpenCV motion detection + YOLO зоны
 │   ├── zones.py          # Зоны террариума (skull/water/sauna)
 │   ├── timelapse.py      # Захват кадров, прунинг, сборка MP4
-│   └── highlights.py     # Состояние геккона (roaming/resting/sleeping)
+│   ├── highlights.py     # Состояние геккона (roaming/resting/sleeping)
+│   ├── tunnel.py         # Cloudflare Quick Tunnel
+│   ├── yolo.py           # YOLO inference (зоны геккона)
+│   └── debug_log.py      # Debug log streaming
 ├── routers/
 │   ├── auth.py           # Login/logout, CSRF
 │   ├── admin.py          # Веб-панель
 │   ├── devices.py        # Lamp/sensor/camera API + sensor history
-│   └── schedules.py      # Schedule CRUD
+│   ├── schedules.py      # Schedule CRUD
+│   └── debug.py          # Debug panel (token-auth)
 ├── bot/
 │   ├── access.py         # Контроль доступа
 │   ├── formatters.py     # Форматирование статуса (RU/EN)
@@ -44,7 +48,8 @@ GeckoHome/
 ├── templates/
 │   ├── admin.html        # Веб-панель (лампы, камера, расписания, графики)
 │   ├── login.html
-│   └── stream.html       # Telegram WebApp стрим
+│   ├── stream.html       # Telegram WebApp стрим
+│   └── debug.html        # Debug panel UI
 ├── static/               # CSS, JS
 ├── gecko_detect.py       # Standalone: YOLO live + калибровка зон
 └── .env                  # Секреты (не коммитить)
@@ -52,17 +57,32 @@ GeckoHome/
 
 ## Setup
 
-### 1. Requirements
+### 1. Deploy (Docker)
+
+```bash
+# Первый запуск — сборка образа и старт
+docker compose up --build -d
+
+# Логи
+docker compose logs -f
+```
+
+Требует Docker. На Windows — Docker Engine в WSL2 (см. `setup.ps1`).  
+При каждом пуше в `main` GitHub Actions автоматически пересобирает и перезапускает контейнеры.
+
+### 2. Development (без Docker)
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+python main.py       # веб-панель (порт 8000)
+python -m bot        # Telegram бот (отдельный процесс)
 ```
 
-ffmpeg должен быть в PATH (нужен для камеры и таймлапса).
+ffmpeg должен быть в PATH.
 
-### 2. Environment (.env)
+### 3. Environment (.env)
 
 ```env
 # Tuya device IDs (из приложения SmartLife)
@@ -98,10 +118,10 @@ TELEGRAM_SUPER_ADMIN=123456789   # несколько через запятую:
 
 # Камера (опционально)
 CAMERA_RTSP_URL=rtsp://user:pass@192.168.x.x:554/stream
-MEDIAMTX_BIN=C:\path\to\mediamtx.exe   # WebRTC низкая задержка
+MEDIAMTX_BIN=mediamtx/mediamtx.exe   # WebRTC низкая задержка (путь относительно корня проекта)
 
 # YOLO (опционально, включает детекцию зон геккона)
-YOLO_MODEL_PATH=C:\path\to\best.pt
+YOLO_MODEL_PATH=models/gecko_yolo.pt  # путь относительно корня проекта
 ```
 
 ### 3. Получить локальные ключи Tuya
@@ -129,11 +149,10 @@ RTSP URL → `CAMERA_RTSP_URL`. Кнопки Snapshot / Clip появятся в
 ## Running
 
 ```bash
-# Веб-панель (порт 8000)
-python main.py
-
-# Telegram бот (отдельный процесс)
-python -m bot
+docker compose up -d          # старт
+docker compose down           # стоп
+docker compose logs -f app    # логи сервера
+docker compose logs -f bot    # логи бота
 ```
 
 Веб-панель: `http://localhost:8000/admin`

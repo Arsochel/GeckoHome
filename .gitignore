@@ -15,9 +15,7 @@ tunnel.pid
 backups/
 timelapse/
 bin/
-mediamtx/
 runs/
-*.pt
 .playwright-mcp/
 build_dataset_timelapse.py
 convert_dataset.py

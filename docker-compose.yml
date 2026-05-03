@@ -1,0 +1,26 @@
+services:
+  app:
+    build: .
+    command: python main.py
+    ports:
+      - "${SERVER_PORT:-8000}:8000"
+    volumes:
+      - .:/app
+    env_file: .env
+    environment:
+      MEDIAMTX_BIN: /usr/local/bin/mediamtx
+      # YOLO model: положи веса в models/gecko_yolo.pt
+      YOLO_MODEL_PATH: /app/models/gecko_yolo.pt
+    restart: unless-stopped
+
+  bot:
+    build: .
+    command: python bot.py
+    volumes:
+      - .:/app
+    env_file: .env
+    environment:
+      YOLO_MODEL_PATH: /app/models/gecko_yolo.pt
+    restart: unless-stopped
+    depends_on:
+      - app
