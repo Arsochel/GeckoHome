@@ -99,8 +99,6 @@ async def main():
         drop_pending_updates=False,
         allowed_updates=["message", "callback_query"],
         timeout=20,
-        read_timeout=30,
-        connect_timeout=10,
     )
 
     asyncio.create_task(_log_server())
