@@ -21,7 +21,14 @@ jobs:
           & $gitCmd pull origin main
 
       - name: Deploy with Docker Compose
+        timeout-minutes: 15
         run: |
           $dir = "$env:PROJECT_DIR".Trim()
           $wslDir = "/mnt/" + ($dir[0].ToString().ToLower()) + "/" + ($dir.Substring(3) -replace '\\', '/')
-          wsl -d Ubuntu -u root -- bash -c "service docker start; cd $wslDir && docker compose up --build -d"
+          Write-Host "WSL dir: $wslDir"
+          Write-Host "Testing WSL..."
+          wsl -d Ubuntu -u root -- bash -c "echo 'WSL OK'; docker --version; service docker start 2>&1 || true"
+          Write-Host "WSL exit code: $LASTEXITCODE"
+          Write-Host "Running docker compose..."
+          wsl -d Ubuntu -u root -- bash -c "cd $wslDir && docker compose up --build -d 2>&1"
+          Write-Host "Docker compose exit code: $LASTEXITCODE"
