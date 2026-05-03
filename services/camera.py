@@ -37,25 +37,43 @@ async def snapshot() -> str | None:
     if not CAMERA_RTSP_URL:
         return None
 
-    # Берём кадр из motion monitor — не открываем лишнее RTSP соединение
-    try:
-        from services.motion import monitor as _monitor
-        import cv2 as _cv2
-        # Ждём кадра до 3 секунд если monitor запущен но кадра ещё нет
-        for _ in range(30):
-            frame = _monitor.get_latest_frame()
+    from config import APP_INTERNAL_URL
+    if APP_INTERNAL_URL:
+        # Бот-процесс в Docker: берём кадр с app через HTTP (motion monitor уже держит RTSP)
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{APP_INTERNAL_URL}/api/stream/snapshot")
+                if resp.status_code == 200:
+                    fd, path = tempfile.mkstemp(suffix=".jpg", prefix="gecko_snap_")
+                    os.close(fd)
+                    with open(path, "wb") as f:
+                        f.write(resp.content)
+                    return path
+        except Exception as e:
+            log.debug("internal snapshot fetch failed: %s", e)
+    else:
+        # App-процесс: берём кадр напрямую из motion monitor
+        try:
+            from services.motion import monitor as _monitor
+            import cv2 as _cv2
+            if _monitor.is_running():
+                for _ in range(30):
+                    frame = _monitor.get_latest_frame()
+                    if frame is not None:
+                        break
+                    await asyncio.sleep(0.1)
+            else:
+                frame = _monitor.get_latest_frame()
             if frame is not None:
-                break
-            await asyncio.sleep(0.1)
-        if frame is not None:
-            frame = _cv2.rotate(frame, _cv2.ROTATE_90_CLOCKWISE)
-            fd, path = tempfile.mkstemp(suffix=".jpg", prefix="gecko_snap_")
-            os.close(fd)
-            _cv2.imwrite(path, frame)
-            if os.path.getsize(path) > 0:
-                return path
-    except Exception as e:
-        log.debug("monitor frame fetch: %s", e)
+                frame = _cv2.rotate(frame, _cv2.ROTATE_90_CLOCKWISE)
+                fd, path = tempfile.mkstemp(suffix=".jpg", prefix="gecko_snap_")
+                os.close(fd)
+                _cv2.imwrite(path, frame)
+                if os.path.getsize(path) > 0:
+                    return path
+        except Exception as e:
+            log.debug("monitor frame fetch: %s", e)
 
     fd, path = tempfile.mkstemp(suffix=".jpg", prefix="gecko_snap_")
     os.close(fd)

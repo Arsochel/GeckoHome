@@ -84,6 +84,18 @@ async def stream_page(request: Request):
     return _templates.TemplateResponse(request, "stream.html")
 
 
+@app.get("/api/stream/snapshot")
+async def stream_snapshot_internal():
+    frame = motion_monitor.get_latest_frame()
+    from fastapi.responses import Response
+    from fastapi import HTTPException
+    if frame is None:
+        raise HTTPException(status_code=503, detail="No frame available")
+    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return Response(content=buf.tobytes(), media_type="image/jpeg")
+
+
 @app.get("/api/stream/live.mjpeg")
 async def stream_live_mjpeg():
 

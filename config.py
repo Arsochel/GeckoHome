@@ -31,6 +31,7 @@ MEDIAMTX_BIN = os.getenv("MEDIAMTX_BIN", "mediamtx")
 YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "")
 
 STREAM_BASE_URL = os.getenv("STREAM_BASE_URL", "http://localhost:8080")
+APP_INTERNAL_URL = os.getenv("APP_INTERNAL_URL", "")
 
 # Motion detection
 MOTION_THRESHOLD = int(os.getenv("MOTION_THRESHOLD", "25"))
