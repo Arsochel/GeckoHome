@@ -198,22 +198,23 @@ def get_lamp_status(lamp_type: str) -> dict:
     cached = _lamp_cache.get(lamp_type)
     if cached and time.time() - cached["ts"] < _LAMP_CACHE_TTL:
         return {"online": cached["online"], "switch": cached["switch"]}
+    last_switch = cached.get("switch") if cached else None
     d = _outlet(f"{lamp_type}_lamp")
     if not d:
-        return {"online": None, "switch": None}
+        return {"online": None, "switch": last_switch}
     try:
         result = d.status()
         if result.get("Error"):
             log.warning("status %s: %s", lamp_type, result["Error"])
-            entry = {"online": False, "switch": None, "ts": time.time()}
-            _lamp_cache[lamp_type] = entry
-            return {"online": False, "switch": None}
+            _lamp_cache[lamp_type] = {"online": False, "switch": last_switch, "ts": time.time()}
+            return {"online": False, "switch": last_switch}
         switch = result.get("dps", {}).get("1")
         _lamp_cache[lamp_type] = {"online": True, "switch": switch, "ts": time.time()}
         return {"online": True, "switch": switch}
     except Exception as e:
         log.error("status %s error: %s", lamp_type, e)
-        return {"online": False, "switch": None}
+        _lamp_cache[lamp_type] = {"online": False, "switch": last_switch, "ts": time.time()}
+        return {"online": False, "switch": last_switch}
 
 
 _CODE_TO_DPS = {"va_temperature": "1", "va_humidity": "2"}
