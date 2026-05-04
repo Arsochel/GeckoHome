@@ -33,6 +33,7 @@ from bot.formatters import status_text, user_status_text
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    log.info("/start from @%s (%s)", user.username or user.first_name, user.id)
     if not await check_access(user.id):
         if await was_user_revoked(user.id):
             await set_user_blocked(user.id, False)  # сбрасываем blocked_bot, доступ всё ещё revoked
