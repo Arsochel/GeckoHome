@@ -310,6 +310,7 @@ async def _recover_lamps(schedules: list[dict]):
 
 
 async def load_schedules():
+    await tuya.warm_lamp_cache()
     await tuya.warm_sensor_cache()
     saved = await get_schedules()
     if not saved:

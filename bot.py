@@ -50,6 +50,7 @@ async def main():
     await init_db()
     await load_last_feeding()
     from services import tuya
+    await tuya.warm_lamp_cache()
     await tuya.warm_sensor_cache()
 
     async def _error_handler(update, context):

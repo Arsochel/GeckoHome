@@ -116,6 +116,16 @@ def _notify_thermometer_online(temp, hum):
     threading.Thread(target=_send, daemon=True).start()
 
 
+async def warm_lamp_cache():
+    """Восстанавливает последнее состояние ламп из lamp_events на старте."""
+    from database import get_last_lamp_states
+    states = await get_last_lamp_states()
+    for lamp, switch in states.items():
+        _lamp_cache[lamp] = {"online": None, "switch": switch, "ts": 0}
+    if states:
+        log.info("lamp cache warmed from DB: %s", {k: v for k, v in states.items()})
+
+
 async def warm_sensor_cache():
     """Заполняет кэш сенсоров из последней записи в БД — чтобы первый /start был мгновенным."""
     from database import get_last_sensor_reading
