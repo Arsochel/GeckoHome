@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gecko Stats</title>
+    <link rel="stylesheet" href="/static/admin.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <style>
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+        .stat-num {
+            font-size: 30px;
+            font-weight: 700;
+            color: #f0f0f0;
+            line-height: 1.1;
+        }
+        .stat-unit {
+            font-size: 15px;
+            font-weight: 400;
+            color: #606060;
+        }
+        .stat-sub {
+            margin-top: 5px;
+            font-size: 11px;
+            color: #4a6a4a;
+        }
+        .chart-wrap {
+            padding: 20px 20px 12px;
+        }
+        .chart-section {
+            display: flex;
+            align-items: center;
+            margin: 28px 0 12px;
+        }
+        .chart-section .title {
+            margin: 0;
+            flex: 1;
+        }
+        .legend {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+            padding: 0 4px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 11px;
+            color: #606060;
+        }
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+        .no-data {
+            text-align: center;
+            padding: 32px;
+            color: #404040;
+            font-size: 13px;
+        }
+        @media (max-width: 600px) {
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 380px) {
+            .stats-grid { grid-template-columns: 1fr 1fr; }
+            .stat-num { font-size: 24px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="header-left">
+        <span>📊</span>
+        <h1>Gecko Stats</h1>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center">
+        <a href="/admin" class="btn-logout">← Admin</a>
+        <a href="/logout" class="btn-logout">Sign out</a>
+    </div>
+</div>
+
+<div class="container" style="max-width:860px">
+
+    <!-- Overview -->
+    <div class="title">Overview</div>
+    <div class="stats-grid" id="summary-grid">
+        <div class="card no-hover"><div class="label">Загрузка...</div></div>
+    </div>
+
+    <!-- Feedings -->
+    <div class="chart-section">
+        <div class="title">Кормления</div>
+    </div>
+    <div class="card no-hover chart-wrap">
+        <canvas id="feedings-chart" height="160"></canvas>
+        <div id="feedings-empty" class="no-data" style="display:none">Нет данных о кормлениях</div>
+        <div class="legend" id="feedings-legend" style="display:none">
+            <div class="legend-item"><div class="legend-dot" style="background:rgba(34,197,94,0.7)"></div> Обычное</div>
+            <div class="legend-item"><div class="legend-dot" style="background:rgba(139,92,246,0.7)"></div> + витамины</div>
+            <div class="legend-item"><div class="legend-dot" style="background:rgba(249,115,22,0.7)"></div> + бражник</div>
+            <div class="legend-item"><div class="legend-dot" style="background:rgba(251,191,36,0.8)"></div> + оба</div>
+        </div>
+    </div>
+
+    <!-- Cricket Stock -->
+    <div class="chart-section">
+        <div class="title">Запас сверчков</div>
+    </div>
+    <div class="card no-hover chart-wrap">
+        <canvas id="cricket-chart" height="160"></canvas>
+        <div id="cricket-empty" class="no-data" style="display:none">Нет данных о сверчках</div>
+    </div>
+
+    <!-- Environment -->
+    <div class="chart-section">
+        <div class="title">Температура и влажность</div>
+        <div class="chart-range-btns" id="temp-range">
+            <button class="chart-range-btn active" onclick="loadTemp(this,24)">24ч</button>
+            <button class="chart-range-btn" onclick="loadTemp(this,72)">3д</button>
+            <button class="chart-range-btn" onclick="loadTemp(this,168)">7д</button>
+            <button class="chart-range-btn" onclick="loadTemp(this,720)">30д</button>
+        </div>
+    </div>
+    <div class="card no-hover chart-wrap">
+        <canvas id="temp-chart" height="160"></canvas>
+        <div id="temp-empty" class="no-data" style="display:none">Нет данных сенсоров</div>
+    </div>
+
+    <!-- Motion activity -->
+    <div class="chart-section">
+        <div class="title">Активность геккона по часам</div>
+    </div>
+    <div class="card no-hover chart-wrap" style="padding-bottom:20px">
+        <canvas id="motion-chart" height="140"></canvas>
+        <div id="motion-empty" class="no-data" style="display:none">Нет данных о движении</div>
+    </div>
+
+</div>
+
+<script>
+// ── Chart.js global defaults ──────────────────────────────────────────────────
+Chart.defaults.color = '#606060';
+Chart.defaults.borderColor = 'rgba(255,255,255,0.07)';
+Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
+
+const TOOLTIP = {
+    backgroundColor: '#1a241a',
+    titleColor: '#d0d0d0',
+    bodyColor: '#909090',
+    borderColor: '#2a3a2a',
+    borderWidth: 1,
+    padding: 10,
+};
+const SCALE = {
+    grid:   { color: 'rgba(255,255,255,0.055)' },
+    ticks:  { color: '#585858', font: { size: 11 } },
+    border: { color: 'transparent' },
+};
+const SCALE_NO_GRID = { ...SCALE, grid: { display: false } };
+
+// ── Summary ───────────────────────────────────────────────────────────────────
+async function loadSummary() {
+    const d = await fetch('/api/stats/summary').then(r => r.json());
+
+    const vitPct = d.feedings_total
+        ? Math.round(d.vitamins_count / d.feedings_total * 100)
+        : 0;
+
+    const cards = [
+        {
+            label: 'Кормлений всего',
+            value: d.feedings_total,
+            unit: '',
+            sub: d.first_feeding ? `с ${fmtDate(d.first_feeding)}` : '',
+        },
+        {
+            label: 'Средний интервал',
+            value: d.avg_feeding_interval ?? '—',
+            unit: d.avg_feeding_interval != null ? ' д.' : '',
+            sub: d.days_since_last_feeding != null
+                ? `последний раз ${d.days_since_last_feeding} д. назад`
+                : '',
+        },
+        {
+            label: 'Сверчков / кормление',
+            value: d.avg_crickets ?? '—',
+            unit: d.avg_crickets != null ? ' шт.' : '',
+            sub: `всего съедено: ${d.crickets_total_fed} шт.`,
+        },
+        {
+            label: 'Сверчков осталось',
+            value: d.crickets_remaining ?? '—',
+            unit: d.crickets_remaining != null ? ' шт.' : '',
+            sub: `куплено всего: ${d.total_bought} шт.`,
+        },
+        {
+            label: 'Кормлений с витаминами',
+            value: d.vitamins_count,
+            unit: '',
+            sub: `${vitPct}% от всех кормлений`,
+        },
+        {
+            label: 'Бражник / движений 24ч',
+            value: d.hornworm_count,
+            unit: '',
+            sub: `движений за 24ч: ${d.motion_24h}`,
+        },
+    ];
+
+    document.getElementById('summary-grid').innerHTML = cards.map(c => `
+        <div class="card no-hover">
+            <div class="label">${c.label}</div>
+            <div class="stat-num">${c.value}<span class="stat-unit">${c.unit}</span></div>
+            ${c.sub ? `<div class="stat-sub">${c.sub}</div>` : ''}
+        </div>
+    `).join('');
+}
+
+// ── Feedings bar chart ────────────────────────────────────────────────────────
+async function loadFeedingsChart() {
+    const data = await fetch('/api/stats/feedings').then(r => r.json());
+    const canvas = document.getElementById('feedings-chart');
+    const empty  = document.getElementById('feedings-empty');
+    const legend = document.getElementById('feedings-legend');
+
+    if (!data.length) {
+        canvas.style.display = 'none';
+        empty.style.display  = '';
+        return;
+    }
+    legend.style.display = 'flex';
+
+    const bgColors = data.map(d => {
+        if (d.vitamins && d.hornworm) return 'rgba(251,191,36,0.75)';
+        if (d.vitamins)               return 'rgba(139,92,246,0.65)';
+        if (d.hornworm)               return 'rgba(249,115,22,0.65)';
+        return 'rgba(34,197,94,0.55)';
+    });
+
+    const labels = data.map(d => fmtDateShort(d.date));
+
+    new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [{
+                data: data.map(d => d.crickets),
+                backgroundColor: bgColors,
+                borderColor: bgColors.map(c => c.replace(/[\d.]+\)$/, '0.95)')),
+                borderWidth: 1,
+                borderRadius: 4,
+                borderSkipped: false,
+            }],
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    ...TOOLTIP,
+                    callbacks: {
+                        title: i => data[i[0].dataIndex].date,
+                        label: i => {
+                            const d = data[i.dataIndex];
+                            const parts = [`${i.parsed.y ?? 0} шт.`];
+                            if (d.vitamins) parts.push('💊 витамины');
+                            if (d.hornworm) parts.push('🐛 бражник');
+                            return parts;
+                        },
+                    },
+                },
+            },
+            scales: {
+                x: { ...SCALE_NO_GRID, ticks: { ...SCALE.ticks, maxRotation: 45, maxTicksLimit: 20 } },
+                y: { ...SCALE, beginAtZero: true, ticks: { ...SCALE.ticks, stepSize: 1 } },
+            },
+        },
+    });
+}
+
+// ── Cricket stock area chart ──────────────────────────────────────────────────
+async function loadCricketChart() {
+    const data = await fetch('/api/stats/cricket').then(r => r.json());
+    const canvas = document.getElementById('cricket-chart');
+    const empty  = document.getElementById('cricket-empty');
+
+    if (!data.length) {
+        canvas.style.display = 'none';
+        empty.style.display  = '';
+        return;
+    }
+
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createLinearGradient(0, 0, 0, 220);
+    gradient.addColorStop(0, 'rgba(34,197,94,0.22)');
+    gradient.addColorStop(1, 'rgba(34,197,94,0.01)');
+
+    // Show label every 7 days to avoid crowding
+    const labels = data.map((d, i) => {
+        if (i === 0 || i === data.length - 1 || i % 7 === 0) return fmtDateShort(d.date);
+        return '';
+    });
+
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                data: data.map(d => d.remaining),
+                borderColor: '#22c55e',
+                backgroundColor: gradient,
+                borderWidth: 2,
+                pointRadius: 0,
+                pointHoverRadius: 4,
+                pointHoverBackgroundColor: '#22c55e',
+                fill: true,
+                tension: 0.15,
+            }],
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    ...TOOLTIP,
+                    callbacks: {
+                        title: i => data[i[0].dataIndex].date,
+                        label: i => `${i.parsed.y} шт.`,
+                    },
+                },
+            },
+            scales: {
+                x: { ...SCALE },
+                y: { ...SCALE, beginAtZero: true },
+            },
+        },
+    });
+}
+
+// ── Temperature / humidity dual-axis ──────────────────────────────────────────
+let _tempChart = null;
+
+async function loadTemp(btn, hours) {
+    if (btn) {
+        document.querySelectorAll('#temp-range .chart-range-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+    }
+
+    const rows   = await fetch(`/api/sensor-history?hours=${hours}`).then(r => r.json());
+    const canvas = document.getElementById('temp-chart');
+    const empty  = document.getElementById('temp-empty');
+
+    if (!rows.length) {
+        canvas.style.display = 'none';
+        empty.style.display  = '';
+        return;
+    }
+    canvas.style.display = '';
+    empty.style.display  = 'none';
+
+    const labels = rows.map(r => {
+        const d = new Date(r.t.replace(' ', 'T'));
+        return hours <= 24
+            ? d.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })
+            : d.toLocaleDateString('ru', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    });
+    const temps = rows.map(r => r.temp);
+    const hums  = rows.map(r => r.hum);
+
+    if (_tempChart) {
+        _tempChart.data.labels = labels;
+        _tempChart.data.datasets[0].data = temps;
+        _tempChart.data.datasets[1].data = hums;
+        _tempChart.update('none');
+        return;
+    }
+
+    _tempChart = new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                {
+                    label: 'Температура °C',
+                    data: temps,
+                    borderColor: '#f97316',
+                    backgroundColor: 'rgba(249,115,22,0.07)',
+                    borderWidth: 2,
+                    pointRadius: rows.length > 50 ? 0 : 2,
+                    tension: 0.3,
+                    fill: true,
+                    yAxisID: 'yT',
+                },
+                {
+                    label: 'Влажность %',
+                    data: hums,
+                    borderColor: '#38bdf8',
+                    backgroundColor: 'rgba(56,189,248,0.06)',
+                    borderWidth: 2,
+                    pointRadius: rows.length > 50 ? 0 : 2,
+                    tension: 0.3,
+                    fill: true,
+                    yAxisID: 'yH',
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: {
+                    display: true,
+                    labels: { color: '#707070', boxWidth: 12, font: { size: 11 } },
+                },
+                tooltip: { ...TOOLTIP },
+            },
+            scales: {
+                x: { ...SCALE, ticks: { ...SCALE.ticks, maxTicksLimit: 8, maxRotation: 0 } },
+                yT: {
+                    ...SCALE,
+                    position: 'left',
+                    ticks: { ...SCALE.ticks, color: '#f97316', callback: v => v + '°' },
+                },
+                yH: {
+                    ...SCALE,
+                    position: 'right',
+                    grid: { display: false },
+                    ticks: { ...SCALE.ticks, color: '#38bdf8', callback: v => v + '%' },
+                },
+            },
+        },
+    });
+}
+
+// ── Motion by hour bar chart ──────────────────────────────────────────────────
+async function loadMotionChart() {
+    const { hours } = await fetch('/api/stats/motion').then(r => r.json());
+    const canvas = document.getElementById('motion-chart');
+    const empty  = document.getElementById('motion-empty');
+
+    const total = hours.reduce((a, b) => a + b, 0);
+    if (total === 0) {
+        canvas.style.display = 'none';
+        empty.style.display  = '';
+        return;
+    }
+
+    const labels = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0') + ':00');
+    const maxVal = Math.max(...hours);
+
+    new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [{
+                data: hours,
+                backgroundColor: hours.map(v =>
+                    v === maxVal && maxVal > 0
+                        ? 'rgba(34,197,94,0.65)'
+                        : 'rgba(34,197,94,0.28)'
+                ),
+                borderColor: 'rgba(34,197,94,0.5)',
+                borderWidth: 1,
+                borderRadius: 3,
+            }],
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    ...TOOLTIP,
+                    callbacks: { label: i => `${i.parsed.y} событий` },
+                },
+            },
+            scales: {
+                x: { ...SCALE_NO_GRID, ticks: { ...SCALE.ticks, maxRotation: 0 } },
+                y: { ...SCALE, beginAtZero: true, ticks: { ...SCALE.ticks, stepSize: 1 } },
+            },
+        },
+    });
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fmtDate(iso) {
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('ru', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+function fmtDateShort(iso) {
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('ru', { day: 'numeric', month: 'short' });
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+loadSummary();
+loadFeedingsChart();
+loadCricketChart();
+loadTemp(null, 24);
+loadMotionChart();
+lucide.createIcons();
+</script>
+
+</body>
+</html>

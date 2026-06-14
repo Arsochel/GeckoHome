@@ -6,6 +6,7 @@ services:
       - "${SERVER_PORT:-8000}:8000"
     volumes:
       - .:/app
+      - /mnt/e/GeckoTimelapse:/app/timelapse
     env_file: .env
     environment:
       MEDIAMTX_BIN: /usr/local/bin/mediamtx
@@ -18,6 +19,7 @@ services:
     command: python bot.py
     volumes:
       - .:/app
+      - /mnt/e/GeckoTimelapse:/app/timelapse
     env_file: .env
     environment:
       YOLO_MODEL_PATH: /app/models/gecko_yolo.pt

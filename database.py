@@ -111,6 +111,10 @@ async def init_db():
             except Exception:
                 pass
         try:
+            await db.execute("ALTER TABLE cricket_batches ADD COLUMN deaths INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        try:
             await db.execute("UPDATE allowed_users SET lang = 'ru' WHERE lang IS NULL")
             await db.execute("UPDATE allowed_users SET lang = 'en' WHERE user_id = 5157476563")
         except Exception:
@@ -441,8 +445,9 @@ async def set_user_blocked(user_id: int, blocked: bool):
     async with _db(write=True) as db:
         if blocked:
             await db.execute(
-                "UPDATE allowed_users SET blocked_bot = 1, blocked_at = ?, revoked = 1 WHERE user_id = ?",
-                (datetime.now(), user_id),
+                "INSERT INTO allowed_users (user_id, blocked_bot, blocked_at, revoked) VALUES (?, 1, ?, 1)"
+                " ON CONFLICT(user_id) DO UPDATE SET blocked_bot=1, blocked_at=excluded.blocked_at, revoked=1",
+                (user_id, datetime.now()),
             )
         else:
             await db.execute(
@@ -701,19 +706,19 @@ async def log_cricket_ran_out():
 
 
 async def get_last_cricket_purchase() -> tuple[datetime | None, int]:
-    """Возвращает (дата закупки, кол-во) последней партии или (None, 0)."""
+    """Возвращает (дата закупки, кол-во за вычетом смертей) последней партии или (None, 0)."""
     async with _db() as db:
         async with db.execute(
-            "SELECT bought_at, count FROM cricket_batches ORDER BY bought_at DESC LIMIT 1"
+            "SELECT bought_at, count, COALESCE(deaths, 0) as deaths FROM cricket_batches ORDER BY bought_at DESC LIMIT 1"
         ) as cur:
             row = await cur.fetchone()
             if not row:
                 return None, 0
-            return datetime.fromisoformat(row["bought_at"]), row["count"]
+            return datetime.fromisoformat(row["bought_at"]), max(0, row["count"] - row["deaths"])
 
 
 async def get_cricket_remaining() -> int | None:
-    """Остаток сверчков: куплено минус съедено с момента последней закупки."""
+    """Остаток сверчков: куплено минус сдохло минус съедено с момента последней закупки."""
     bought_at, total = await get_last_cricket_purchase()
     if bought_at is None or total == 0:
         return None
@@ -726,11 +731,32 @@ async def get_cricket_remaining() -> int | None:
     return max(0, total - (row["eaten"] or 0))
 
 
+async def log_cricket_deaths(count: int):
+    """Записывает гибель сверчков в текущую партию."""
+    async with _db() as db:
+        await db.execute(
+            "UPDATE cricket_batches SET deaths = COALESCE(deaths, 0) + ? WHERE id = (SELECT id FROM cricket_batches ORDER BY bought_at DESC LIMIT 1)",
+            (count,),
+        )
+        await db.commit()
+
+
+async def get_feedings_count_since(since: datetime) -> int:
+    """Количество кормлений начиная с даты since (не включая)."""
+    async with _db() as db:
+        async with db.execute(
+            "SELECT COUNT(*) as cnt FROM feedings WHERE fed_at > ?", (since.isoformat(),)
+        ) as cur:
+            row = await cur.fetchone()
+            return row["cnt"] if row else 0
+
+
 async def get_next_feeding_supplements() -> list[str]:
     """Возвращает список добавок для следующего кормления."""
     supplements = []
     last_vitamins = await get_last_note_date("vitamins")
-    if last_vitamins is None or (datetime.now() - last_vitamins).days >= 10:
+    if last_vitamins is None or await get_feedings_count_since(last_vitamins) >= 1:
+        # каждое 2-е кормление (1-2 раза в неделю по статье)
         supplements.append("vitamins")
     last_hornworm = await get_last_note_date("hornworm")
     if last_hornworm is None or (datetime.now() - last_hornworm).days >= 14:

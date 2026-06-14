@@ -688,20 +688,25 @@ async def _handle_remove_user(query, rm_id):
 
 async def _handle_calendar(query):
     from datetime import timedelta
+    from database import get_gecko_birthday, get_cricket_remaining, get_feedings_count_since
+    from services.scheduler import get_feeding_schedule
     now = datetime.now()
 
     last_feeding = get_last_feeding_cached()
     last_hornworm = await get_last_note_date("hornworm")
     last_vitamins = await get_last_note_date("vitamins")
     cricket_bought, cricket_total = await get_last_cricket_purchase()
-    from database import get_cricket_remaining
     cricket_remaining = await get_cricket_remaining()
 
     lines = ["📅 *Календарь ухода*\n━━━━━━━━━━━━━━━\n"]
 
-    # Следующее кормление
+    # Определяем интервал кормления по возрасту
+    birthday = await get_gecko_birthday()
+    feed_interval, cmin, cmax = get_feeding_schedule(birthday) if birthday else (3, 0, 0)
+
+    # Следующее кормление + добавки на ту же дату
     if last_feeding:
-        next_feed = last_feeding + timedelta(days=2)
+        next_feed = last_feeding + timedelta(days=feed_interval)
         delta = (next_feed.date() - now.date()).days
         if delta < 0:
             marker = "🔴"
@@ -715,46 +720,25 @@ async def _handle_calendar(query):
         else:
             marker = "🟢"
             when = f"через {delta} д."
-        lines.append(f"{marker} 🍎 Кормление: *{next_feed.strftime('%d.%m')}* ({when})")
+
+        amount = f"{cmin}–{cmax} шт." if cmin else ""
+        feed_line = f"{marker} 🍎 Кормление: *{next_feed.strftime('%d.%m')}* ({when})"
+        if amount:
+            feed_line += f"  _{amount}_"
+
+        # Добавки: нужны ли к этому кормлению?
+        extras = []
+        feedings_since_vitamins = await get_feedings_count_since(last_vitamins) if last_vitamins else 99
+        if last_vitamins is None or feedings_since_vitamins >= 1:
+            extras.append("💊 витамины")
+        if last_hornworm is None or (next_feed.date() - last_hornworm.date()).days >= 14:
+            extras.append("🐛 бражник")
+        if extras:
+            feed_line += "\n   ┗ " + ", ".join(extras)
+
+        lines.append(feed_line)
     else:
         lines.append("🔴 🍎 Кормление: *не записано*")
-
-    # Следующие витамины
-    if last_vitamins:
-        next_vitamins = last_vitamins + timedelta(days=10)
-        delta_v = (next_vitamins.date() - now.date()).days
-        if delta_v <= 0:
-            v_marker = "🔴"
-            when_v = "сегодня" if delta_v == 0 else f"просрочено на {-delta_v} д."
-        elif delta_v == 1:
-            v_marker = "🟡"
-            when_v = "завтра"
-        elif delta_v <= 3:
-            v_marker = "🟡"
-            when_v = f"через {delta_v} д."
-        else:
-            v_marker = "🟢"
-            when_v = f"через {delta_v} д."
-        lines.append(f"{v_marker} 💊 Витамины: *{next_vitamins.strftime('%d.%m')}* ({when_v})")
-    else:
-        lines.append("🔴 💊 Витамины: *не записано*")
-
-    # Следующий бражник
-    if last_hornworm:
-        next_hornworm = last_hornworm + timedelta(days=14)
-        delta = (next_hornworm.date() - now.date()).days
-        if delta < 0:
-            marker = "🔴"
-            when = f"просрочено на {-delta} д."
-        elif delta == 0:
-            marker = "🟡"
-            when = "сегодня"
-        else:
-            marker = "🟢"
-            when = f"через {delta} д."
-        lines.append(f"{marker} 🐛 Бражник: *{next_hornworm.strftime('%d.%m')}* ({when})")
-    else:
-        lines.append("🔴 🐛 Бражник: *никогда не давали*")
 
     # Сверчки
     if cricket_remaining is not None:

@@ -19,7 +19,7 @@ from config import (
     CAMERA_RTSP_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS, TELEGRAM_ADMINS, YOLO_MODEL_PATH,
     MOTION_THRESHOLD, MOTION_MIN_AREA, MOTION_TIMEOUT, MOTION_DEBUG,
 )
-from database import save_photo, add_motion_event, set_gecko_state, log_gecko_zone, update_motion_photo, DB_PATH, get_blocked_user_ids
+from database import save_photo, add_motion_event, set_gecko_state, log_gecko_zone, update_motion_photo, DB_PATH, get_blocked_user_ids, set_user_blocked
 from services.yolo import get_model as _get_yolo
 from services.zones import detect_zone, ZONE_W, ZONE_H
 
@@ -54,17 +54,32 @@ async def _send_telegram_video(video_path: str, caption: str):
     if not TELEGRAM_BOT_TOKEN or not _motion_recipients:
         return
     for admin_id in _motion_recipients:
-        try:
-            async with httpx.AsyncClient(timeout=90) as client:
-                with open(video_path, "rb") as f:
-                    await client.post(
-                        _tg_url("sendVideo"),
-                        data={"chat_id": admin_id, "caption": caption},
-                        files={"video": ("motion.mp4", f, "video/mp4")},
-                    )
-            log.info("video sent to Telegram")
-        except Exception as e:
-            log.error("Telegram send error: %s", e)
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=90) as client:
+                    with open(video_path, "rb") as f:
+                        r = await client.post(
+                            _tg_url("sendVideo"),
+                            data={"chat_id": admin_id, "caption": caption},
+                            files={"video": ("motion.mp4", f, "video/mp4")},
+                        )
+                data = r.json()
+                if data.get("ok"):
+                    log.info("video sent to Telegram (attempt %d)", attempt + 1)
+                    await set_user_blocked(admin_id, False)
+                elif "blocked" in data.get("description", "").lower():
+                    await set_user_blocked(admin_id, True)
+                    log.warning("user %s blocked the bot, skipping", admin_id)
+                else:
+                    log.error("Telegram send failed (attempt %d/3): %s", attempt + 1, data.get("description"))
+                    if attempt < 2:
+                        await asyncio.sleep(15 * (attempt + 1))
+                    continue
+                break
+            except Exception as e:
+                log.error("Telegram send error (attempt %d/3): %s: %s", attempt + 1, type(e).__name__, e)
+                if attempt < 2:
+                    await asyncio.sleep(15 * (attempt + 1))
 
 
 def _compile_video_sync(snapshot_paths: list[str]) -> str | None:
@@ -177,20 +192,38 @@ class MotionMonitor:
         bg_sub = cv2.createBackgroundSubtractorMOG2(
             history=200, varThreshold=MOTION_THRESHOLD, detectShadows=False
         )
-        motion_active  = False
-        last_motion_t  = 0.0
-        last_snap_t    = 0.0
-        last_yolo_t    = 0.0
+        motion_active    = False
+        last_motion_t    = 0.0
+        last_snap_t      = 0.0
+        last_yolo_t      = 0.0
         snapshots: list[str] = []
-        warmup_frames  = 0
+        warmup_frames    = 0
+        last_frame_sum   = None
+        frozen_count     = 0
+        FROZEN_LIMIT     = 150   # ~45 сек при 0.3s интервале
+        last_frame_t     = time.monotonic()
+        NO_FRAME_TIMEOUT = 30.0  # сек без кадров → реконнект
 
         try:
             while not self._stop_event.is_set():
                 frame = latest_frame[0]
                 if frame is None:
+                    if time.monotonic() - last_frame_t > NO_FRAME_TIMEOUT:
+                        raise RuntimeError("no new frame for 30s, reconnecting")
                     time.sleep(0.1)
                     continue
                 latest_frame[0] = None
+                last_frame_t = time.monotonic()
+
+                # Детектор заморозки: если кадр идентичен предыдущему N раз подряд — реконнект
+                frame_sum = int(frame.sum())
+                if frame_sum == last_frame_sum:
+                    frozen_count += 1
+                    if frozen_count >= FROZEN_LIMIT:
+                        raise RuntimeError("RTSP stream frozen, reconnecting")
+                else:
+                    last_frame_sum = frame_sum
+                    frozen_count = 0
 
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 gray = cv2.GaussianBlur(gray, (11, 11), 0)

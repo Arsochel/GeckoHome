@@ -620,6 +620,16 @@ body {
   }
 }
 
+/* ── Stats grid ── */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+@media (max-width: 600px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
 /* ── Chart range buttons ── */
 .chart-range-btns {
   display: flex;

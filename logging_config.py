@@ -61,6 +61,20 @@ def setup_logging(debug: bool = False, enable_debug_buffer: bool = False) -> log
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("tinytuya").setLevel(logging.WARNING)
 
+    # транзиентные сетевые ошибки Telegram (Bad Gateway, Service Unavailable и т.п.)
+    # не наша вина, PTB сам ретраит — логируем как warning, не error
+    class _TgNetworkFilter(logging.Filter):
+        _TRANSIENT = ("Bad Gateway", "Service Unavailable", "Gateway Timeout")
+        def filter(self, record: logging.LogRecord) -> bool:
+            if record.levelno >= logging.ERROR:
+                msg = record.getMessage()
+                if any(t in msg for t in self._TRANSIENT):
+                    record.levelno = logging.WARNING
+                    record.levelname = "WARNING"
+            return True
+
+    logging.getLogger("telegram.ext.Updater").addFilter(_TgNetworkFilter())
+
     if enable_debug_buffer:
         from services.debug_log import attach
         attach(handler)

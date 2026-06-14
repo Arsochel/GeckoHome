@@ -235,11 +235,17 @@ _CLOUD_CODES = {
 
 
 def _get_sensor_cloud(device_id: str, code: str):
+    import socket
     cloud = _get_cloud()
     if not cloud or not device_id:
         return None
     try:
-        r = cloud.cloudrequest(f"/v2.0/cloud/thing/{device_id}/shadow/properties")
+        old_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(10)
+        try:
+            r = cloud.cloudrequest(f"/v2.0/cloud/thing/{device_id}/shadow/properties")
+        finally:
+            socket.setdefaulttimeout(old_timeout)
         if not r.get("success"):
             return None
         cloud_code = _CLOUD_CODES.get(code)

@@ -20,6 +20,26 @@ from config import (
     TEMP_ALERT_MIN, TEMP_ALERT_MAX, HUM_ALERT_MIN, HUM_ALERT_MAX, FEEDING_ALERT_DAYS,
 )
 
+# (max_months, interval_days, crickets_min, crickets_max)
+# По статье: до 6 мес — ежедневно 5-7 шт; 6-12 мес — раз в 2 дня 5-6 шт; взрослые — раз в 3-4 дня 5-10 шт
+_FEEDING_SCHEDULE = [
+    (6,   1, 5,  7),
+    (12,  2, 5,  6),
+    (999, 3, 5, 10),
+]
+
+
+def get_feeding_schedule(birthday: str) -> tuple[int, int, int]:
+    """Возвращает (interval_days, crickets_min, crickets_max) по дате рождения."""
+    from datetime import date
+    bday = date.fromisoformat(birthday)
+    today = date.today()
+    months = (today.year - bday.year) * 12 + (today.month - bday.month)
+    for max_months, interval, cmin, cmax in _FEEDING_SCHEDULE:
+        if months < max_months:
+            return interval, cmin, cmax
+    return _FEEDING_SCHEDULE[-1][1], _FEEDING_SCHEDULE[-1][2], _FEEDING_SCHEDULE[-1][3]
+
 _DB_PATH     = os.path.join(os.path.dirname(os.path.dirname(__file__)), "gecko.db")
 _BACKUP_DIR  = os.path.join(os.path.dirname(os.path.dirname(__file__)), "backups")
 _KEEP_BACKUPS = 7
@@ -30,9 +50,7 @@ scheduler = AsyncIOScheduler()
 async def lamp_schedule(lamp_type: str, duration_h: float):
     await asyncio.to_thread(tuya.switch_lamp, lamp_type, True)
     await log_lamp_event(lamp_type, "on", "scheduler")
-    await asyncio.sleep(duration_h * 3600)
-    await asyncio.to_thread(tuya.switch_lamp, lamp_type, False)
-    await log_lamp_event(lamp_type, "off", "scheduler")
+    # Выключение — через sync_lamp_schedules каждые 15 мин (не sleep, чтобы не было проблем с прерыванием)
 
 
 def backup_db():
@@ -68,18 +86,40 @@ async def _send_alert(text: str):
     for admin_id in _alert_recipients:
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                await client.post(
+                r = await client.post(
                     f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
                     json={"chat_id": admin_id, "text": text, "parse_mode": "Markdown"},
                 )
+            data = r.json()
+            if data.get("ok"):
+                await set_user_blocked(admin_id, False)
+            elif "blocked" in data.get("description", "").lower():
+                await set_user_blocked(admin_id, True)
+                log.warning("user %s blocked the bot", admin_id)
         except Exception as e:
             log.debug("alert send failed: %s", e)
 
 
 async def record_sensor_readings():
-    temp = await asyncio.to_thread(tuya.get_sensor, "thermometer", "va_temperature")
-    hum = await asyncio.to_thread(tuya.get_sensor, "humidifier", "va_humidity") or \
-          await asyncio.to_thread(tuya.get_sensor, "thermometer", "va_humidity")
+    try:
+        temp = await asyncio.wait_for(
+            asyncio.to_thread(tuya.get_sensor, "thermometer", "va_temperature"),
+            timeout=20,
+        )
+    except asyncio.TimeoutError:
+        log.warning("record_sensor_readings: temperature read timeout")
+        temp = None
+    try:
+        hum = await asyncio.wait_for(
+            asyncio.to_thread(tuya.get_sensor, "humidifier", "va_humidity"),
+            timeout=20,
+        ) or await asyncio.wait_for(
+            asyncio.to_thread(tuya.get_sensor, "thermometer", "va_humidity"),
+            timeout=20,
+        )
+    except asyncio.TimeoutError:
+        log.warning("record_sensor_readings: humidity read timeout")
+        hum = None
     await log_sensor_reading(temp, hum)
     # alerts
     alerts = []
@@ -140,7 +180,14 @@ async def check_feeding_alert():
     if last is None:
         return
     days = (datetime.now().date() - last.date()).days
-    if days < FEEDING_ALERT_DAYS:
+
+    birthday = await get_gecko_birthday()
+    if birthday:
+        alert_days, cmin, cmax = get_feeding_schedule(birthday)
+    else:
+        alert_days, cmin, cmax = FEEDING_ALERT_DAYS, 0, 0
+
+    if days < alert_days:
         return
 
     crickets_remaining = await get_cricket_remaining()
@@ -150,7 +197,8 @@ async def check_feeding_alert():
         return
 
     supplements = await get_next_feeding_supplements()
-    text = f"🍎 *Пора кормить геккона!* (не ел *{days} д.*)"
+    amount_hint = f" {cmin}–{cmax} сверчков" if cmin else ""
+    text = f"🍎 *Пора кормить геккона!* (не ел *{days} д.*){amount_hint}"
     if "vitamins" in supplements:
         text += "\n💊 Это кормление *с витаминами*"
     if "hornworm" in supplements:
@@ -282,6 +330,78 @@ async def _lamp_off_after(lamp_type: str, seconds: float):
     log.info("recovery: turned off %s", lamp_type)
 
 
+async def sync_lamp_schedules():
+    """Каждые 15 мин проверяет что лампы соответствуют расписанию.
+    Фиксирует пропущенные cron job'ы при restart loop'ах.
+    Не включает лампы если температура > 34°C (temp_guard отключил)."""
+    try:
+        temp_raw = await asyncio.wait_for(
+            asyncio.to_thread(tuya.get_sensor, "thermometer", "va_temperature"),
+            timeout=15,
+        )
+    except asyncio.TimeoutError:
+        temp_raw = None
+    temp_c = temp_raw / 10.0 if temp_raw is not None else None
+
+    saved = await get_schedules()
+    for lamp in ("uv", "heat"):
+        should_be_on = any(
+            not s.get("paused") and s["lamp_type"] == lamp and _is_lamp_on_now(s["hour"], s["minute"], s["duration_h"])
+            for s in saved
+        )
+        status = tuya.get_lamp_status(lamp)
+        currently_on = status.get("switch") is True
+        if should_be_on and not currently_on:
+            if temp_c is not None and temp_c > 34:
+                log.debug("sync_lamps: %s should be ON but temp=%.1f°C > 34, skipping", lamp, temp_c)
+                continue
+            log.info("sync_lamps: %s should be ON (schedule), turning on", lamp)
+            await asyncio.to_thread(tuya.switch_lamp, lamp, True)
+            await log_lamp_event(lamp, "on", "sync")
+        elif not should_be_on and currently_on:
+            log.info("sync_lamps: %s should be OFF (outside window), turning off", lamp)
+            await asyncio.to_thread(tuya.switch_lamp, lamp, False)
+            await log_lamp_event(lamp, "off", "sync")
+
+
+async def check_lamp_temperature():
+    """Выключает лампы при перегреве (>34°C) и включает обратно при остывании (≤30°C).
+    Работает только внутри активного окна расписания."""
+    try:
+        temp = await asyncio.wait_for(
+            asyncio.to_thread(tuya.get_sensor, "thermometer", "va_temperature"),
+            timeout=20,
+        )
+    except asyncio.TimeoutError:
+        log.warning("temp_guard: sensor timeout, skipping")
+        return
+    if temp is None:
+        return
+    temp_c = temp / 10.0
+
+    saved = await get_schedules()
+    for s in saved:
+        if s.get("paused"):
+            continue
+        if not _is_lamp_on_now(s["hour"], s["minute"], s["duration_h"]):
+            continue
+
+        lamp = s["lamp_type"]
+        status = tuya.get_lamp_status(lamp)
+        currently_on = status.get("switch") is True
+
+        if temp_c > 34 and currently_on:
+            log.warning("temp_guard: %.1f°C > 34 — выключаю %s лампу", temp_c, lamp)
+            await asyncio.to_thread(tuya.switch_lamp, lamp, False)
+            await log_lamp_event(lamp, "off", "temp_guard")
+            await _send_alert(f"🌡 *Перегрев {temp_c:.1f}°C* — автоматически выключена {lamp.upper()} лампа")
+        elif temp_c <= 30 and not currently_on:
+            log.info("temp_guard: %.1f°C ≤ 30 — включаю %s лампу", temp_c, lamp)
+            await asyncio.to_thread(tuya.switch_lamp, lamp, True)
+            await log_lamp_event(lamp, "on", "temp_guard")
+            await _send_alert(f"🌡 *Остыло до {temp_c:.1f}°C* — автоматически включена {lamp.upper()} лампа")
+
+
 async def _recover_lamps(schedules: list[dict]):
     """При старте выключает лампы вне окна; для ламп внутри окна планирует выключение."""
     lamps_in_window: dict[str, float] = {}  # lamp_type → remaining_seconds
@@ -331,6 +451,8 @@ async def load_schedules():
             scheduler.get_job(s["id"]).pause()
 
     scheduler.add_job(record_sensor_readings, "interval", minutes=30, id="sensor_readings")
+    scheduler.add_job(sync_lamp_schedules, "interval", minutes=5, id="lamp_sync")
+    scheduler.add_job(check_lamp_temperature, "interval", minutes=5, id="temp_guard")
     scheduler.add_job(update_gecko_state, "interval", minutes=2, id="gecko_state")
     scheduler.add_job(backup_db, "cron", hour=3, minute=0, id="db_backup")
     scheduler.add_job(check_feeding_alert, "cron", hour=20, minute=0, id="feeding_alert")

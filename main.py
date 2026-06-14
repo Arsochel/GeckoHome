@@ -10,6 +10,7 @@ setup_logging(enable_debug_buffer=True)
 
 log = logging.getLogger(__name__)
 
+
 import cv2
 
 from fastapi import FastAPI, WebSocket
@@ -22,7 +23,7 @@ from services import tuya, camera, tunnel
 from services.scheduler import load_schedules, start as start_scheduler, shutdown as stop_scheduler
 from services.motion import monitor as motion_monitor
 from services.highlights import update_gecko_state
-from routers import auth, admin, devices, schedules, debug
+from routers import auth, admin, devices, schedules, debug, stats
 
 
 @asynccontextmanager
@@ -64,6 +65,7 @@ app.include_router(admin.router)
 app.include_router(devices.router)
 app.include_router(schedules.router)
 app.include_router(debug.router)
+app.include_router(stats.router)
 
 import httpx as _httpx
 from fastapi import Request, HTTPException
