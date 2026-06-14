@@ -72,9 +72,12 @@ async def init_db():
                 caption       TEXT
             );
             CREATE TABLE IF NOT EXISTS feedings (
-                id     INTEGER PRIMARY KEY AUTOINCREMENT,
-                fed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                notes  TEXT
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                fed_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                crickets INTEGER,
+                vitamins INTEGER DEFAULT 0,
+                hornworm INTEGER DEFAULT 0,
+                notes    TEXT
             );
             CREATE TABLE IF NOT EXISTS gecko_state (
                 id         INTEGER PRIMARY KEY CHECK (id = 1),
@@ -113,6 +116,14 @@ async def init_db():
             await db.execute("ALTER TABLE cricket_batches ADD COLUMN deaths INTEGER DEFAULT 0")
         except Exception:
             pass
+
+        # feedings migrations (DBs created before these columns existed)
+        for col in ("crickets INTEGER", "vitamins INTEGER DEFAULT 0",
+                    "hornworm INTEGER DEFAULT 0", "notes TEXT"):
+            try:
+                await db.execute(f"ALTER TABLE feedings ADD COLUMN {col}")
+            except Exception:
+                pass
         try:
             await db.execute("UPDATE allowed_users SET lang = 'ru' WHERE lang IS NULL")
             await db.execute("UPDATE allowed_users SET lang = 'en' WHERE user_id = 5157476563")
