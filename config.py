@@ -1,78 +1,182 @@
-import os
-import secrets
-from dotenv import load_dotenv
+"""Application configuration.
 
+Values are loaded from the environment (and a local ``.env`` for development) and
+validated/coerced by pydantic-settings. The typed :class:`Settings` object is the
+canonical source; the module-level constants below are kept as a backward-compatible
+surface so existing ``from config import SECRET_KEY`` style imports keep working.
+"""
+
+from __future__ import annotations
+
+import secrets
+
+from dotenv import load_dotenv
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Populate os.environ from .env so modules that read os.getenv directly
+# (e.g. SERVER_PORT in main.py, OpenCV/FFmpeg knobs in services) work in local dev.
 load_dotenv()
 
-DEVICE_IDS = {
-    "uv_lamp": os.getenv("DEVICE_UV_LAMP", ""),
-    "heat_lamp": os.getenv("DEVICE_HEAT_LAMP", ""),
-    "thermometer": os.getenv("DEVICE_THERMOMETER", ""),
-    "humidifier": os.getenv("DEVICE_HUMIDIFIER", ""),
-}
 
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
-SECRET_KEY = os.getenv("SECRET_KEY", "") or secrets.token_hex(32)
+class Settings(BaseSettings):
+    """Typed application settings, read case-insensitively from env / .env."""
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_SUPER_ADMINS: set[int] = {
-    int(x) for x in os.getenv("TELEGRAM_SUPER_ADMIN", "0").replace(",", " ").split()
-    if x.strip().isdigit() and int(x) != 0
-}
-TELEGRAM_ADMINS: set[int] = {
-    int(x) for x in os.getenv("TELEGRAM_ADMIN", "").replace(",", " ").split()
-    if x.strip().isdigit()
-}
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # ── Web auth ──────────────────────────────────────────────────────────────
+    admin_username: str = "admin"
+    admin_password_hash: str = ""
+    secret_key: str = ""
+
+    # ── Telegram ─────────────────────────────────────────────────────────────
+    telegram_bot_token: str = ""
+    telegram_super_admin: str = "0"  # comma/space separated user ids
+    telegram_admin: str = ""
+
+    # ── Tuya device ids ─────────────────────────────────────────────────────────
+    device_uv_lamp: str = ""
+    device_heat_lamp: str = ""
+    device_thermometer: str = ""
+    device_humidifier: str = ""
+
+    # ── Tuya local LAN (tinytuya) ────────────────────────────────────────────────
+    device_uv_lamp_ip: str = ""
+    device_uv_lamp_local_key: str = ""
+    device_uv_lamp_version: str = "3.4"
+    device_heat_lamp_ip: str = ""
+    device_heat_lamp_local_key: str = ""
+    device_heat_lamp_version: str = "3.4"
+    device_thermometer_ip: str = ""
+    device_thermometer_local_key: str = ""
+    device_thermometer_version: str = "3.3"
+    device_humidifier_ip: str = ""
+    device_humidifier_local_key: str = ""
+    device_humidifier_version: str = "3.3"
+
+    # ── Tuya Cloud (fallback for battery devices) ────────────────────────────────
+    tuya_cloud_key: str = ""
+    tuya_cloud_secret: str = ""
+    tuya_cloud_region: str = "eu"
+
+    # ── Camera / streaming ───────────────────────────────────────────────────────
+    camera_rtsp_url: str = ""
+    mediamtx_bin: str = "mediamtx"
+    stream_base_url: str = "http://localhost:8080"
+    app_internal_url: str = ""
+    yolo_model_path: str = ""
+    server_port: int = 8000
+
+    # ── Motion detection ─────────────────────────────────────────────────────────
+    motion_threshold: int = 25
+    motion_min_area: int = 1342
+    motion_timeout: int = 45
+    motion_debug: bool = True
+
+    # ── Sensor alert thresholds (temperature stored ×10) ─────────────────────────
+    temp_alert_min: float = 200
+    temp_alert_max: float = 350
+    hum_alert_min: float = 30
+    hum_alert_max: float = 60
+
+    # ── Feeding ──────────────────────────────────────────────────────────────────
+    feeding_alert_days: int = 2
+
+    @field_validator("tuya_cloud_region")
+    @classmethod
+    def _normalize_region(cls, v: str) -> str:
+        return v.strip().lower() or "eu"
+
+    @staticmethod
+    def _parse_ids(raw: str, *, drop_zero: bool) -> set[int]:
+        ids = {int(x) for x in raw.replace(",", " ").split() if x.strip().isdigit()}
+        return {i for i in ids if i != 0} if drop_zero else ids
+
+    @property
+    def super_admin_ids(self) -> set[int]:
+        return self._parse_ids(self.telegram_super_admin, drop_zero=True)
+
+    @property
+    def admin_ids(self) -> set[int]:
+        return self._parse_ids(self.telegram_admin, drop_zero=False)
+
+    @property
+    def device_ids(self) -> dict[str, str]:
+        return {
+            "uv_lamp": self.device_uv_lamp,
+            "heat_lamp": self.device_heat_lamp,
+            "thermometer": self.device_thermometer,
+            "humidifier": self.device_humidifier,
+        }
+
+    @property
+    def device_local(self) -> dict[str, dict[str, str]]:
+        return {
+            "uv_lamp": {
+                "ip": self.device_uv_lamp_ip,
+                "key": self.device_uv_lamp_local_key,
+                "version": self.device_uv_lamp_version,
+            },
+            "heat_lamp": {
+                "ip": self.device_heat_lamp_ip,
+                "key": self.device_heat_lamp_local_key,
+                "version": self.device_heat_lamp_version,
+            },
+            "thermometer": {
+                "ip": self.device_thermometer_ip,
+                "key": self.device_thermometer_local_key,
+                "version": self.device_thermometer_version,
+            },
+            "humidifier": {
+                "ip": self.device_humidifier_ip,
+                "key": self.device_humidifier_local_key,
+                "version": self.device_humidifier_version,
+            },
+        }
+
+
+settings = Settings()
+
+# ── Backward-compatible module-level constants ────────────────────────────────
+DEVICE_IDS = settings.device_ids
+
+ADMIN_USERNAME = settings.admin_username
+ADMIN_PASSWORD_HASH = settings.admin_password_hash
+# A fixed SECRET_KEY keeps sessions valid across restarts; a random fallback
+# (logs everyone out on restart) is used only when none is configured.
+SECRET_KEY = settings.secret_key or secrets.token_hex(32)
+
+TELEGRAM_BOT_TOKEN = settings.telegram_bot_token
+TELEGRAM_SUPER_ADMINS: set[int] = settings.super_admin_ids
+TELEGRAM_ADMINS: set[int] = settings.admin_ids
 TIMELAPSE_OWNER_ID: int = int(next(iter(TELEGRAM_SUPER_ADMINS), 0))
 
-CAMERA_RTSP_URL = os.getenv("CAMERA_RTSP_URL", "")
-MEDIAMTX_BIN = os.getenv("MEDIAMTX_BIN", "mediamtx")
-YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "")
+CAMERA_RTSP_URL = settings.camera_rtsp_url
+MEDIAMTX_BIN = settings.mediamtx_bin
+YOLO_MODEL_PATH = settings.yolo_model_path
 
-STREAM_BASE_URL = os.getenv("STREAM_BASE_URL", "http://localhost:8080")
-APP_INTERNAL_URL = os.getenv("APP_INTERNAL_URL", "")
+STREAM_BASE_URL = settings.stream_base_url
+APP_INTERNAL_URL = settings.app_internal_url
 
-# Motion detection
-MOTION_THRESHOLD = int(os.getenv("MOTION_THRESHOLD", "25"))
-MOTION_MIN_AREA  = int(os.getenv("MOTION_MIN_AREA", "1342"))
-MOTION_TIMEOUT   = int(os.getenv("MOTION_TIMEOUT", "45"))
-MOTION_DEBUG     = os.getenv("MOTION_DEBUG", "true").lower() in ("1", "true", "yes")
+MOTION_THRESHOLD = settings.motion_threshold
+MOTION_MIN_AREA = settings.motion_min_area
+MOTION_TIMEOUT = settings.motion_timeout
+MOTION_DEBUG = settings.motion_debug
 
-# Sensor alerts
-TEMP_ALERT_MIN = float(os.getenv("TEMP_ALERT_MIN", "200"))   # ×10, т.е. 20.0°C
-TEMP_ALERT_MAX = float(os.getenv("TEMP_ALERT_MAX", "350"))   # ×10, т.е. 35.0°C
-HUM_ALERT_MIN  = float(os.getenv("HUM_ALERT_MIN", "30"))
-HUM_ALERT_MAX  = float(os.getenv("HUM_ALERT_MAX", "60"))
+TEMP_ALERT_MIN = settings.temp_alert_min
+TEMP_ALERT_MAX = settings.temp_alert_max
+HUM_ALERT_MIN = settings.hum_alert_min
+HUM_ALERT_MAX = settings.hum_alert_max
 
-# Feeding alert
-FEEDING_ALERT_DAYS = int(os.getenv("FEEDING_ALERT_DAYS", "2"))
+FEEDING_ALERT_DAYS = settings.feeding_alert_days
 
-# Tuya Cloud API (для батарейных устройств без локального LAN)
-TUYA_CLOUD_KEY    = os.getenv("TUYA_CLOUD_KEY", "")
-TUYA_CLOUD_SECRET = os.getenv("TUYA_CLOUD_SECRET", "")
-TUYA_CLOUD_REGION = os.getenv("TUYA_CLOUD_REGION", "eu")
+TUYA_CLOUD_KEY = settings.tuya_cloud_key
+TUYA_CLOUD_SECRET = settings.tuya_cloud_secret
+TUYA_CLOUD_REGION = settings.tuya_cloud_region
 
-# tinytuya local keys (optional, enables local LAN control without cloud)
-DEVICE_LOCAL = {
-    "uv_lamp": {
-        "ip":      os.getenv("DEVICE_UV_LAMP_IP", ""),
-        "key":     os.getenv("DEVICE_UV_LAMP_LOCAL_KEY", ""),
-        "version": os.getenv("DEVICE_UV_LAMP_VERSION", "3.4"),
-    },
-    "heat_lamp": {
-        "ip":      os.getenv("DEVICE_HEAT_LAMP_IP", ""),
-        "key":     os.getenv("DEVICE_HEAT_LAMP_LOCAL_KEY", ""),
-        "version": os.getenv("DEVICE_HEAT_LAMP_VERSION", "3.4"),
-    },
-    "thermometer": {
-        "ip":      os.getenv("DEVICE_THERMOMETER_IP", ""),
-        "key":     os.getenv("DEVICE_THERMOMETER_LOCAL_KEY", ""),
-        "version": os.getenv("DEVICE_THERMOMETER_VERSION", "3.3"),
-    },
-    "humidifier": {
-        "ip":      os.getenv("DEVICE_HUMIDIFIER_IP", ""),
-        "key":     os.getenv("DEVICE_HUMIDIFIER_LOCAL_KEY", ""),
-        "version": os.getenv("DEVICE_HUMIDIFIER_VERSION", "3.3"),
-    },
-}
+DEVICE_LOCAL = settings.device_local
