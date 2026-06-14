@@ -1,0 +1,20 @@
+# Normalize line endings. Text files are LF in the repo; checked out per-OS.
+* text=auto eol=lf
+
+# Windows-only scripts stay CRLF on checkout.
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets — never touch.
+*.pt binary
+*.db binary
+*.mp4 binary
+*.mp3 binary
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.ico binary
+*.exe binary
+*.tar.gz binary
