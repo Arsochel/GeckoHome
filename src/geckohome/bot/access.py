@@ -1,5 +1,5 @@
-from config import TELEGRAM_SUPER_ADMINS, TELEGRAM_ADMINS
-from database import is_user_allowed
+from geckohome.config import TELEGRAM_SUPER_ADMINS, TELEGRAM_ADMINS
+from geckohome.database import is_user_allowed
 
 
 def is_super_admin(user_id: int) -> bool:

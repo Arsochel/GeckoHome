@@ -3,7 +3,7 @@ import socket
 import threading
 import time
 import tinytuya
-from config import DEVICE_IDS, DEVICE_LOCAL, TUYA_CLOUD_KEY, TUYA_CLOUD_SECRET, TUYA_CLOUD_REGION
+from geckohome.config import DEVICE_IDS, DEVICE_LOCAL, TUYA_CLOUD_KEY, TUYA_CLOUD_SECRET, TUYA_CLOUD_REGION
 
 _lamp_cache: dict[str, dict] = {}  # lamp_type → {"switch": bool|None, "online": bool|None, "ts": float}
 _LAMP_CACHE_TTL = 15  # seconds
@@ -97,7 +97,7 @@ def _listener_thread():
 
 def _notify_thermometer_online(temp, hum):
     import httpx, threading
-    from config import TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS
+    from geckohome.config import TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS
     if not TELEGRAM_BOT_TOKEN:
         return
     t_str = f"{temp/10:.1f}°C" if temp is not None else "—"
@@ -118,7 +118,7 @@ def _notify_thermometer_online(temp, hum):
 
 async def warm_lamp_cache():
     """Восстанавливает последнее состояние ламп из lamp_events на старте."""
-    from database import get_last_lamp_states
+    from geckohome.database import get_last_lamp_states
     states = await get_last_lamp_states()
     for lamp, switch in states.items():
         _lamp_cache[lamp] = {"online": None, "switch": switch, "ts": 0}
@@ -128,7 +128,7 @@ async def warm_lamp_cache():
 
 async def warm_sensor_cache():
     """Заполняет кэш сенсоров из последней записи в БД — чтобы первый /start был мгновенным."""
-    from database import get_last_sensor_reading
+    from geckohome.database import get_last_sensor_reading
     temp, hum = await get_last_sensor_reading()
     if temp is not None:
         _sensor_value_cache["thermometer:va_temperature"] = {"value": temp, "ts": time.time()}

@@ -3,9 +3,9 @@ import uuid
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
-from services.scheduler import scheduler, lamp_schedule
-from database import save_schedule, delete_schedule as db_delete_schedule, set_schedule_paused, log_lamp_event
-from routers.auth import get_current_user
+from geckohome.services.scheduler import scheduler, lamp_schedule
+from geckohome.database import save_schedule, delete_schedule as db_delete_schedule, set_schedule_paused, log_lamp_event
+from geckohome.web.routers.auth import get_current_user
 
 import logging
 logger = logging.getLogger(__name__)

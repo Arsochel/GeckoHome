@@ -2,7 +2,7 @@ import logging
 import os
 import threading
 
-from config import YOLO_MODEL_PATH
+from geckohome.config import YOLO_MODEL_PATH
 
 log = logging.getLogger(__name__)
 

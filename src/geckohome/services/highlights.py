@@ -1,8 +1,8 @@
 import logging
 from datetime import datetime
 
-from database import set_gecko_state
-from services.motion import MOTION_TIMEOUT
+from geckohome.database import set_gecko_state
+from geckohome.services.motion import MOTION_TIMEOUT
 
 log = logging.getLogger(__name__)
 
@@ -10,7 +10,7 @@ _SLEEP_THRESHOLD_MIN = 3  # минут без движения → считае�
 
 
 async def update_gecko_state():
-    from services.motion import get_last_motion_time
+    from geckohome.services.motion import get_last_motion_time
     last_motion = get_last_motion_time()
     if last_motion is None:
         await set_gecko_state("sleeping")

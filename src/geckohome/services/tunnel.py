@@ -6,11 +6,9 @@ import subprocess
 import threading
 import time
 
-log = logging.getLogger(__name__)
+from geckohome.paths import TUNNEL_PID_FILE, TUNNEL_URL_FILE
 
-_BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-TUNNEL_URL_FILE = os.path.join(_BASE_DIR, "tunnel_url.txt")
-TUNNEL_PID_FILE = os.path.join(_BASE_DIR, "tunnel.pid")
+log = logging.getLogger(__name__)
 
 
 def _run():

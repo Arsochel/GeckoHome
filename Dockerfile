@@ -32,6 +32,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Install the package itself (deps already installed above) so the
+# `geckohome` package is importable and the console scripts exist.
+RUN pip install --no-cache-dir --no-deps -e .
+
 EXPOSE 8000
 
-CMD ["python", "main.py"]
+CMD ["geckohome-web"]

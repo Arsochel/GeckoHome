@@ -2,13 +2,14 @@ from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from services import tuya
-from services.scheduler import scheduler
-from config import DEVICE_IDS
-from routers.auth import get_current_user
+from geckohome import paths
+from geckohome.services import tuya
+from geckohome.services.scheduler import scheduler
+from geckohome.config import DEVICE_IDS
+from geckohome.web.routers.auth import get_current_user
 
 router = APIRouter()
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory=paths.TEMPLATES_DIR)
 
 _DEVICE_LABELS = {
     "uv_lamp":     "UV Lamp",

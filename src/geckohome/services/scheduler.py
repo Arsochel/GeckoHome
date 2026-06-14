@@ -11,11 +11,13 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import httpx
 
-from services import tuya
-from services.highlights import update_gecko_state
-from services.timelapse import capture_timelapse_frame, generate_and_send_timelapse, generate_and_send_timelapse_preview
-from database import get_schedules, save_schedule, log_lamp_event, log_sensor_reading, get_last_feeding_cached, purge_old_photos, purge_lamp_events, get_next_feeding_supplements, get_last_cricket_purchase, get_alert_message, save_alert_message, delete_alert_message, set_user_blocked, get_blocked_user_ids, get_last_feeding_db, purge_expired_debug_tokens, get_gecko_birthday, get_cricket_remaining
-from config import (
+from geckohome.paths import BACKUPS_DIR as _BACKUP_DIR
+from geckohome.paths import DB_PATH as _DB_PATH
+from geckohome.services import tuya
+from geckohome.services.highlights import update_gecko_state
+from geckohome.services.timelapse import capture_timelapse_frame, generate_and_send_timelapse, generate_and_send_timelapse_preview
+from geckohome.database import get_schedules, save_schedule, log_lamp_event, log_sensor_reading, get_last_feeding_cached, purge_old_photos, purge_lamp_events, get_next_feeding_supplements, get_last_cricket_purchase, get_alert_message, save_alert_message, delete_alert_message, set_user_blocked, get_blocked_user_ids, get_last_feeding_db, purge_expired_debug_tokens, get_gecko_birthday, get_cricket_remaining
+from geckohome.config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS,
     TEMP_ALERT_MIN, TEMP_ALERT_MAX, HUM_ALERT_MIN, HUM_ALERT_MAX, FEEDING_ALERT_DAYS,
 )
@@ -40,8 +42,6 @@ def get_feeding_schedule(birthday: str) -> tuple[int, int, int]:
             return interval, cmin, cmax
     return _FEEDING_SCHEDULE[-1][1], _FEEDING_SCHEDULE[-1][2], _FEEDING_SCHEDULE[-1][3]
 
-_DB_PATH     = os.path.join(os.path.dirname(os.path.dirname(__file__)), "gecko.db")
-_BACKUP_DIR  = os.path.join(os.path.dirname(os.path.dirname(__file__)), "backups")
 _KEEP_BACKUPS = 7
 
 scheduler = AsyncIOScheduler()
@@ -78,7 +78,7 @@ async def _send_alert(text: str):
     if now - _last_alert_time < 1800:  # не чаще раза в 30 мин
         return
     _last_alert_time = now
-    from config import TELEGRAM_ADMINS
+    from geckohome.config import TELEGRAM_ADMINS
     blocked = await get_blocked_user_ids()
     _alert_recipients = (TELEGRAM_SUPER_ADMINS | TELEGRAM_ADMINS) - blocked
     if not TELEGRAM_BOT_TOKEN or not _alert_recipients:
@@ -263,7 +263,7 @@ async def check_birthday():
             return
 
     blocked = await get_blocked_user_ids()
-    from config import TELEGRAM_ADMINS
+    from geckohome.config import TELEGRAM_ADMINS
     recipients = (TELEGRAM_SUPER_ADMINS | TELEGRAM_ADMINS) - blocked
     if not TELEGRAM_BOT_TOKEN or not recipients:
         return
@@ -279,7 +279,7 @@ async def check_birthday():
 
 
 async def check_cricket_alert():
-    from database import get_cricket_remaining
+    from geckohome.database import get_cricket_remaining
     remaining = await get_cricket_remaining()
     if remaining is None:
         return

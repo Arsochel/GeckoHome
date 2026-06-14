@@ -1,8 +1,8 @@
 import asyncio
 from datetime import datetime
 
-from services import tuya
-from database import get_last_feeding_cached, get_gecko_state, get_gecko_zone, get_next_feeding_supplements, get_cricket_remaining
+from geckohome.services import tuya
+from geckohome.database import get_last_feeding_cached, get_gecko_state, get_gecko_zone, get_next_feeding_supplements, get_cricket_remaining
 
 _ZONE_LABELS = {
     "ru": {
@@ -90,7 +90,7 @@ async def _zone_line(lang: str) -> str:
 
 async def _alert_block(lang: str) -> str:
     """Алерты о кормлении и сверчках — показываются прямо в статусе."""
-    from config import FEEDING_ALERT_DAYS
+    from geckohome.config import FEEDING_ALERT_DAYS
     lines = []
 
     last = get_last_feeding_cached()

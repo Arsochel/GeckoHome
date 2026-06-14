@@ -3,11 +3,11 @@ import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
-from services import tuya, camera
-from database import get_schedules, get_access_requests
-from bot.access import is_super_admin
-from bot.i18n import get_lang
-from config import STREAM_BASE_URL
+from geckohome.services import tuya, camera
+from geckohome.database import get_schedules, get_access_requests
+from geckohome.bot.access import is_super_admin
+from geckohome.bot.i18n import get_lang
+from geckohome.config import STREAM_BASE_URL
 
 
 _CAM_LABELS = {
@@ -85,7 +85,9 @@ def detect_stream_url() -> str | None:
 
 def stream_url() -> str | None:
     """None если URL локальный и не подходит для кнопки."""
-    tunnel_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tunnel_url.txt")
+    from geckohome.paths import TUNNEL_URL_FILE
+
+    tunnel_file = TUNNEL_URL_FILE
     try:
         with open(tunnel_file) as f:
             base = f.read().strip()

@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    command: python main.py
+    command: geckohome-web
     ports:
       - "${SERVER_PORT:-8000}:8000"
     volumes:
@@ -16,7 +16,7 @@ services:
 
   bot:
     build: .
-    command: python bot.py
+    command: geckohome-bot
     volumes:
       - .:/app
       - /mnt/e/GeckoTimelapse:/app/timelapse

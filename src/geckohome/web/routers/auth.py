@@ -7,12 +7,13 @@ from fastapi import APIRouter, HTTPException, Request, Form, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from config import ADMIN_USERNAME, ADMIN_PASSWORD_HASH
+from geckohome import paths
+from geckohome.config import ADMIN_USERNAME, ADMIN_PASSWORD_HASH
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory=paths.TEMPLATES_DIR)
 
 
 def get_current_user(request: Request) -> str:

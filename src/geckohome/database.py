@@ -4,10 +4,9 @@ from datetime import datetime, timedelta
 
 import aiosqlite
 
-log = logging.getLogger(__name__)
+from geckohome.paths import DB_PATH, MEDIA_DB_PATH
 
-DB_PATH       = "gecko.db"
-MEDIA_DB_PATH = "gecko_media.db"
+log = logging.getLogger(__name__)
 
 
 @asynccontextmanager

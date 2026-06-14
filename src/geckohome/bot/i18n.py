@@ -1,4 +1,4 @@
-from database import get_user_lang, set_user_lang
+from geckohome.database import get_user_lang, set_user_lang
 
 
 async def get_lang(user_id: int) -> str:

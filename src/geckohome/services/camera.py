@@ -4,7 +4,7 @@ import os
 import subprocess
 import tempfile
 
-from config import CAMERA_RTSP_URL
+from geckohome.config import CAMERA_RTSP_URL
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ async def snapshot() -> str | None:
     if not CAMERA_RTSP_URL:
         return None
 
-    from config import APP_INTERNAL_URL
+    from geckohome.config import APP_INTERNAL_URL
     if APP_INTERNAL_URL:
         # Бот-процесс в Docker: берём кадр с app через HTTP (motion monitor уже держит RTSP)
         try:
@@ -55,7 +55,7 @@ async def snapshot() -> str | None:
     else:
         # App-процесс: берём кадр напрямую из motion monitor
         try:
-            from services.motion import monitor as _monitor
+            from geckohome.services.motion import monitor as _monitor
             import cv2 as _cv2
             if _monitor.is_running():
                 for _ in range(30):

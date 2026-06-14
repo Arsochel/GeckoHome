@@ -10,15 +10,16 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
-from database import validate_debug_token, get_motion_events_24h_count, get_recent_motion_events
-from services import camera, motion as motion_module, debug_log
-from services.motion import monitor as motion_monitor
-from services.yolo import get_model as get_yolo_model
+from geckohome import paths
+from geckohome.database import validate_debug_token, get_motion_events_24h_count, get_recent_motion_events
+from geckohome.services import camera, motion as motion_module, debug_log
+from geckohome.services.motion import monitor as motion_monitor
+from geckohome.services.yolo import get_model as get_yolo_model
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory=paths.TEMPLATES_DIR)
 
 _START_TS = time.monotonic()
 
@@ -168,14 +169,13 @@ async def debug_metrics(request: Request):
     except Exception:
         pass
 
-    base_dir = os.path.dirname(os.path.dirname(__file__))
-    timelapse_mb = await asyncio.to_thread(_disk_size_mb, os.path.join(base_dir, "timelapse"))
-    db_mb = await asyncio.to_thread(_disk_size_mb, os.path.join(base_dir, "gecko.db"))
+    timelapse_mb = await asyncio.to_thread(_disk_size_mb, paths.TIMELAPSE_DIR)
+    db_mb = await asyncio.to_thread(_disk_size_mb, paths.DB_PATH)
 
     last_motion = motion_module.get_last_motion_time()
     events_24h = await get_motion_events_24h_count()
 
-    from services.scheduler import scheduler as aps
+    from geckohome.services.scheduler import scheduler as aps
     jobs = []
     for j in aps.get_jobs():
         jobs.append({

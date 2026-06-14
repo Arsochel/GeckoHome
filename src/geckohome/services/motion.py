@@ -15,13 +15,13 @@ os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 import cv2
 import httpx
 
-from config import (
+from geckohome.config import (
     CAMERA_RTSP_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS, TELEGRAM_ADMINS, YOLO_MODEL_PATH,
     MOTION_THRESHOLD, MOTION_MIN_AREA, MOTION_TIMEOUT, MOTION_DEBUG,
 )
-from database import save_photo, add_motion_event, set_gecko_state, log_gecko_zone, update_motion_photo, DB_PATH, get_blocked_user_ids, set_user_blocked
-from services.yolo import get_model as _get_yolo
-from services.zones import detect_zone, ZONE_W, ZONE_H
+from geckohome.database import save_photo, add_motion_event, set_gecko_state, log_gecko_zone, update_motion_photo, DB_PATH, get_blocked_user_ids, set_user_blocked
+from geckohome.services.yolo import get_model as _get_yolo
+from geckohome.services.zones import detect_zone, ZONE_W, ZONE_H
 
 _last_motion_time: datetime | None = None
 _motion_lock = threading.Lock()
@@ -333,7 +333,7 @@ class MotionMonitor:
     async def _record_and_send(self):
         """Записывает 30-секундный клип при срабатывании и отправляет суперадмину."""
         try:
-            from services.camera import clip as camera_clip
+            from geckohome.services.camera import clip as camera_clip
             log.info("recording 30s clip...")
             video_path = await camera_clip(30)
             if video_path:

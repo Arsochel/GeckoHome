@@ -4,9 +4,9 @@ import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import Response
 
-from services import tuya, camera
-from database import log_lamp_event, save_photo, get_photos, get_photo_data, delete_photo
-from routers.auth import get_current_user
+from geckohome.services import tuya, camera
+from geckohome.database import log_lamp_event, save_photo, get_photos, get_photo_data, delete_photo
+from geckohome.web.routers.auth import get_current_user
 
 log = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ async def gallery_delete(photo_id: int, _=_auth):
 
 @router.get("/sensor-history")
 async def sensor_history(hours: int = 24, _=_auth):
-    from database import get_sensor_history
+    from geckohome.database import get_sensor_history
     rows = await get_sensor_history(hours=hours)
     return [
         {

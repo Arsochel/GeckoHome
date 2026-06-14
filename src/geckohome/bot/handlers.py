@@ -8,9 +8,9 @@ log = logging.getLogger(__name__)
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ContextTypes
 
-from config import TELEGRAM_SUPER_ADMINS
-from services import tuya, camera
-from database import (
+from geckohome.config import TELEGRAM_SUPER_ADMINS
+from geckohome.services import tuya, camera
+from geckohome.database import (
     add_access_request, get_access_requests, remove_access_request, has_pending_request,
     add_allowed_user, remove_allowed_user, update_user_info,
     get_schedules, save_schedule, delete_schedule, set_schedule_paused, log_lamp_event,
@@ -22,11 +22,11 @@ from database import (
     set_user_blocked, was_user_revoked, get_cricket_stats,
     append_feeding_note, create_debug_token,
 )
-from bot.access import check_access, is_super_admin
-from bot.keyboards import main_keyboard, schedules_keyboard, admin_keyboard, feeding_keyboard, cricket_count_keyboard, stream_url
-from bot.i18n import get_lang, set_lang, toggle_lang
-from config import STREAM_BASE_URL
-from bot.formatters import status_text, user_status_text
+from geckohome.bot.access import check_access, is_super_admin
+from geckohome.bot.keyboards import main_keyboard, schedules_keyboard, admin_keyboard, feeding_keyboard, cricket_count_keyboard, stream_url
+from geckohome.bot.i18n import get_lang, set_lang, toggle_lang
+from geckohome.config import STREAM_BASE_URL
+from geckohome.bot.formatters import status_text, user_status_text
 
 
 # ─── Commands ───
@@ -85,7 +85,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pass
     msg = await ctx.bot.send_message(update.effective_chat.id, text, parse_mode="Markdown", reply_markup=kb)
     ctx.user_data["status_msg_id"] = msg.message_id
-    from services.scheduler import check_feeding_alert, check_cricket_alert
+    from geckohome.services.scheduler import check_feeding_alert, check_cricket_alert
     asyncio.create_task(check_feeding_alert())
     asyncio.create_task(check_cricket_alert())
 
@@ -149,13 +149,13 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data.startswith("timelapse_publish_") and is_super_admin(user_id):
         day = data.removeprefix("timelapse_publish_")
         import os
-        from services.timelapse import TIMELAPSE_VIDEOS_DIR, _send_video
+        from geckohome.services.timelapse import TIMELAPSE_VIDEOS_DIR, _send_video
         path = os.path.join(TIMELAPSE_VIDEOS_DIR, f"timelapse_{day}_15fps.mp4")
         if not os.path.exists(path):
             await query.answer("Файл не найден", show_alert=True)
             return
-        from config import TELEGRAM_ADMINS
-        from database import get_allowed_users, get_blocked_user_ids
+        from geckohome.config import TELEGRAM_ADMINS
+        from geckohome.database import get_allowed_users, get_blocked_user_ids
         allowed = {u["user_id"] for u in await get_allowed_users()}
         blocked = await get_blocked_user_ids()
         everyone = (TELEGRAM_SUPER_ADMINS | TELEGRAM_ADMINS | allowed) - {user_id} - blocked
@@ -444,7 +444,7 @@ async def _handle_lamp(query, user_id, lamp, on):
 
 async def _bump_alerts(ctx, user_id: int):
     """Пересылает активные алерты вниз (после главного сообщения)."""
-    from database import get_cricket_remaining, get_next_feeding_supplements
+    from geckohome.database import get_cricket_remaining, get_next_feeding_supplements
     crickets_remaining = await get_cricket_remaining()
     supplements = await get_next_feeding_supplements()
 
@@ -633,7 +633,7 @@ async def _handle_sched_select_lamp(query, ctx, lamp):
 
 async def _handle_tunnel_restart(query):
     await query.answer("🔄 Перезапуск туннеля...")
-    from services.tunnel import restart as restart_tunnel
+    from geckohome.services.tunnel import restart as restart_tunnel
     await asyncio.to_thread(restart_tunnel)
     kb = await admin_keyboard()
     await _safe_edit(query, "⚙️ *Управление*\n━━━━━━━━━━━━━━━\n\n🔄 Туннель перезапущен, URL обновится через ~30с",
@@ -647,8 +647,9 @@ async def _handle_admin(query):
 
 
 async def _handle_debug_link(query, user_id: int):
-    import os as _os
-    tunnel_file = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "tunnel_url.txt")
+    from geckohome.paths import TUNNEL_URL_FILE
+
+    tunnel_file = TUNNEL_URL_FILE
     lang = await get_lang(user_id)
     try:
         with open(tunnel_file) as f:
@@ -688,8 +689,8 @@ async def _handle_remove_user(query, rm_id):
 
 async def _handle_calendar(query):
     from datetime import timedelta
-    from database import get_gecko_birthday, get_cricket_remaining, get_feedings_count_since
-    from services.scheduler import get_feeding_schedule
+    from geckohome.database import get_gecko_birthday, get_cricket_remaining, get_feedings_count_since
+    from geckohome.services.scheduler import get_feeding_schedule
     now = datetime.now()
 
     last_feeding = get_last_feeding_cached()
@@ -925,7 +926,7 @@ async def _handle_alert_fed_count(query, user_id, count: int):
     confirm = f"✅ Записано! Дал {count} сверчков." if await get_lang(user_id) == "ru" else f"✅ Fed {count} crickets!"
     await query.answer(confirm, show_alert=True)
 
-    from database import get_cricket_remaining
+    from geckohome.database import get_cricket_remaining
     crickets_remaining = await get_cricket_remaining()
 
     event_row = []
@@ -963,7 +964,7 @@ async def _handle_alert_fed_count(query, user_id, count: int):
 
 async def _handle_alert_fed_cancel(query):
     """Восстанавливаем оригинальные кнопки алерта (пользователь передумал)."""
-    from database import get_cricket_remaining, get_last_feeding_db
+    from geckohome.database import get_cricket_remaining, get_last_feeding_db
     supplements = await get_next_feeding_supplements()
     crickets_remaining = await get_cricket_remaining()
     last = await get_last_feeding_db()

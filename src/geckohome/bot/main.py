@@ -4,7 +4,7 @@ import logging
 import signal
 from datetime import datetime
 
-from logging_config import setup_logging
+from geckohome.logging_config import setup_logging
 setup_logging()
 
 log = logging.getLogger(__name__)
@@ -13,9 +13,9 @@ from telegram import BotCommand
 from telegram.error import NetworkError, TimedOut
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
-from config import TELEGRAM_BOT_TOKEN
-from database import init_db, load_last_feeding
-from bot.handlers import cmd_start, cmd_status, button_handler, message_handler
+from geckohome.config import TELEGRAM_BOT_TOKEN
+from geckohome.database import init_db, load_last_feeding
+from geckohome.bot.handlers import cmd_start, cmd_status, button_handler, message_handler
 
 BOT_LOG_PORT = 8765
 
@@ -49,7 +49,7 @@ async def _log_server():
 async def main():
     await init_db()
     await load_last_feeding()
-    from services import tuya
+    from geckohome.services import tuya
     await tuya.warm_lamp_cache()
     await tuya.warm_sensor_cache()
 
@@ -115,5 +115,10 @@ async def main():
     log.info("stopped")
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """Console-script entry point (``geckohome-bot``)."""
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run()

@@ -3,7 +3,7 @@
 Values are loaded from the environment (and a local ``.env`` for development) and
 validated/coerced by pydantic-settings. The typed :class:`Settings` object is the
 canonical source; the module-level constants below are kept as a backward-compatible
-surface so existing ``from config import SECRET_KEY`` style imports keep working.
+surface so existing ``from geckohome.config import SECRET_KEY`` style imports keep working.
 """
 
 from __future__ import annotations

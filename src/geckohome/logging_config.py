@@ -76,7 +76,7 @@ def setup_logging(debug: bool = False, enable_debug_buffer: bool = False) -> log
     logging.getLogger("telegram.ext.Updater").addFilter(_TgNetworkFilter())
 
     if enable_debug_buffer:
-        from services.debug_log import attach
+        from geckohome.services.debug_log import attach
         attach(handler)
 
     return handler

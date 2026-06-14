@@ -4,11 +4,12 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 import aiosqlite
 
-from database import DB_PATH, get_cricket_remaining
-from routers.auth import get_current_user
+from geckohome import paths
+from geckohome.database import DB_PATH, get_cricket_remaining
+from geckohome.web.routers.auth import get_current_user
 
 router = APIRouter()
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory=paths.TEMPLATES_DIR)
 
 _auth = Depends(get_current_user)
 

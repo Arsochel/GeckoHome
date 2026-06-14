@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from contextlib import asynccontextmanager
 
-from logging_config import setup_logging
+from geckohome.logging_config import setup_logging
 setup_logging(enable_debug_buffer=True)
 
 log = logging.getLogger(__name__)
@@ -17,13 +17,14 @@ from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from config import SECRET_KEY, MEDIAMTX_BIN
-from database import init_db, load_last_feeding
-from services import tuya, camera, tunnel
-from services.scheduler import load_schedules, start as start_scheduler, shutdown as stop_scheduler
-from services.motion import monitor as motion_monitor
-from services.highlights import update_gecko_state
-from routers import auth, admin, devices, schedules, debug, stats
+from geckohome import paths
+from geckohome.config import SECRET_KEY, MEDIAMTX_BIN
+from geckohome.database import init_db, load_last_feeding
+from geckohome.services import tuya, camera, tunnel
+from geckohome.services.scheduler import load_schedules, start as start_scheduler, shutdown as stop_scheduler
+from geckohome.services.motion import monitor as motion_monitor
+from geckohome.services.highlights import update_gecko_state
+from geckohome.web.routers import auth, admin, devices, schedules, debug, stats
 
 
 @asynccontextmanager
@@ -58,7 +59,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Gecko Home", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=paths.STATIC_DIR), name="static")
 
 app.include_router(auth.router)
 app.include_router(admin.router)
@@ -73,12 +74,12 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 os.makedirs(camera.HLS_DIR, exist_ok=True)
-_templates = Jinja2Templates(directory="templates")
+_templates = Jinja2Templates(directory=paths.TEMPLATES_DIR)
 
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-    return FileResponse("static/favicon.ico", media_type="image/x-icon")
+    return FileResponse(paths.FAVICON_PATH, media_type="image/x-icon")
 
 
 @app.get("/stream", response_class=HTMLResponse)
@@ -148,11 +149,17 @@ async def serve_hls(filename: str):
     return FileResponse(path, media_type="video/mp2t")
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """Console-script entry point (``geckohome-web``)."""
     import uvicorn
+
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=int(os.getenv("SERVER_PORT", "8000")),
         log_config=None,  # не перезаписывать наш logging setup
     )
+
+
+if __name__ == "__main__":
+    run()

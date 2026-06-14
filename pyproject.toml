@@ -55,11 +55,8 @@ dev = [
 geckohome-web = "geckohome.web.app:run"
 geckohome-bot = "geckohome.bot.main:run"
 
-# NOTE: code currently lives at the repo root (flat layout). The src/geckohome
-# package migration happens in a dedicated refactor step; the wheel target and
-# [project.scripts] above are wired for the post-migration layout.
 [tool.hatch.build.targets.wheel]
-packages = ["bot", "routers", "services"]
+packages = ["src/geckohome"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Ruff — linter + formatter
@@ -97,7 +94,7 @@ ignore = [
 "tests/*" = ["B011", "SIM"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["geckohome", "bot", "routers", "services", "config", "database"]
+known-first-party = ["geckohome"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Mypy — static type checking
@@ -135,12 +132,9 @@ filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.coverage.run]
 branch = true
-source = ["bot", "routers", "services", "config", "database", "logging_config"]
+source = ["src/geckohome"]
 omit = [
     "tests/*",
-    "gecko_detect.py",
-    "motion_debug.py",
-    "timelapse_debug.py",
     "*/__init__.py",
 ]
 

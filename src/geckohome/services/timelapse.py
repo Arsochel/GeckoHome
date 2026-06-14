@@ -14,12 +14,10 @@ import cv2
 import httpx
 from PIL import Image, ImageOps
 
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS, TIMELAPSE_OWNER_ID
-from database import get_blocked_user_ids, set_user_blocked
+from geckohome.config import TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS, TIMELAPSE_OWNER_ID
+from geckohome.database import get_blocked_user_ids, set_user_blocked
+from geckohome.paths import TIMELAPSE_FRAMES_DIR, TIMELAPSE_VIDEOS_DIR
 
-_BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-TIMELAPSE_FRAMES_DIR = os.path.join(_BASE_DIR, "timelapse", "frames")
-TIMELAPSE_VIDEOS_DIR = os.path.join(_BASE_DIR, "timelapse", "videos")
 TIMELAPSE_VIDEO_RETENTION_DAYS = 7
 
 
@@ -37,7 +35,7 @@ def _strip_exif(path: str):
 
 
 def capture_timelapse_frame():
-    from services.motion import monitor as motion_monitor, get_last_motion_time
+    from geckohome.services.motion import monitor as motion_monitor, get_last_motion_time
     last_motion = get_last_motion_time()
     if last_motion is None:
         return
@@ -67,7 +65,7 @@ YOLO_CONF = 0.8
 def _detect_gecko(bgr):
     """Возвращает список bbox [(x1,y1,x2,y2,conf)] или []."""
     try:
-        from services.yolo import get_model
+        from geckohome.services.yolo import get_model
         model = get_model()
         if model is None:
             return []
