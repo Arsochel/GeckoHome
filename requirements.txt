@@ -1,16 +1,20 @@
-fastapi
-uvicorn[standard]
+# Runtime dependencies, pinned to the production container (python:3.11-slim).
+# Kept in sync with pyproject.toml [project.dependencies]. torch/torchvision are
+# installed separately from the CPU wheel index in the Dockerfile, so they are
+# intentionally absent here.
+fastapi==0.136.3
+uvicorn[standard]==0.47.0
 jinja2==3.1.4
-python-multipart
-itsdangerous
-tuya-connector-python
-apscheduler
-aiosqlite
-python-telegram-bot
-python-dotenv
-httpx
-opencv-python-headless
-tinytuya
-bcrypt
-matplotlib
-ultralytics
+python-multipart==0.0.29
+itsdangerous==2.2.0
+apscheduler==3.11.2
+aiosqlite==0.22.1
+python-telegram-bot==22.7
+python-dotenv==1.2.2
+httpx==0.28.1
+opencv-python-headless==4.13.0.92
+tinytuya==1.18.0
+bcrypt==5.0.0
+pillow==12.2.0
+numpy==2.4.4
+ultralytics==8.4.53
