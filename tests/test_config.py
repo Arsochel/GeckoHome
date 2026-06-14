@@ -42,7 +42,9 @@ def test_numeric_coercion():
 
 def test_device_local_structure():
     # Versions passed explicitly so the test does not depend on ambient env/.env.
-    s = _s(device_uv_lamp_ip="192.168.0.5", device_uv_lamp_local_key="k", device_uv_lamp_version="3.4")
+    s = _s(
+        device_uv_lamp_ip="192.168.0.5", device_uv_lamp_local_key="k", device_uv_lamp_version="3.4"
+    )
     assert s.device_local["uv_lamp"] == {"ip": "192.168.0.5", "key": "k", "version": "3.4"}
 
 

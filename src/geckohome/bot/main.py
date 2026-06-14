@@ -2,26 +2,27 @@ import asyncio
 import json
 import logging
 import signal
-from datetime import datetime
 
 from geckohome.logging_config import setup_logging
+
 setup_logging()
 
 log = logging.getLogger(__name__)
 
 from telegram import BotCommand
 from telegram.error import NetworkError, TimedOut
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
+from geckohome.bot.handlers import button_handler, cmd_start, cmd_status, message_handler
 from geckohome.config import TELEGRAM_BOT_TOKEN
 from geckohome.database import init_db, load_last_feeding
-from geckohome.bot.handlers import cmd_start, cmd_status, button_handler, message_handler
 
 BOT_LOG_PORT = 8765
 
 
 async def _log_server():
     """Маленький HTTP сервер для получения событий от main.py."""
+
     async def handle(reader, writer):
         try:
             headers_raw = await reader.readuntil(b"\r\n\r\n")
@@ -50,6 +51,7 @@ async def main():
     await init_db()
     await load_last_feeding()
     from geckohome.services import tuya
+
     await tuya.warm_lamp_cache()
     await tuya.warm_sensor_cache()
 
@@ -77,10 +79,12 @@ async def main():
 
     await app.initialize()
 
-    await app.bot.set_my_commands([
-        BotCommand("start", "Главное меню"),
-        BotCommand("status", "Статус террариума"),
-    ])
+    await app.bot.set_my_commands(
+        [
+            BotCommand("start", "Главное меню"),
+            BotCommand("status", "Статус террариума"),
+        ]
+    )
 
     stop_event = asyncio.Event()
 

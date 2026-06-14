@@ -20,6 +20,7 @@ def _source_url() -> str:
         return f"rtsp://localhost:{MEDIAMTX_RTSP_PORT}/gecko"
     return CAMERA_RTSP_URL
 
+
 _hls_proc: subprocess.Popen | None = None
 _mediamtx_proc: subprocess.Popen | None = None
 
@@ -29,7 +30,7 @@ def is_configured() -> bool:
 
 
 def _run_ffmpeg(args: list, timeout: int) -> subprocess.CompletedProcess:
-    args = [args[0], "-loglevel", "error"] + args[1:]
+    args = [args[0], "-loglevel", "error", *args[1:]]
     return subprocess.run(args, capture_output=True, timeout=timeout)
 
 
@@ -38,10 +39,12 @@ async def snapshot() -> str | None:
         return None
 
     from geckohome.config import APP_INTERNAL_URL
+
     if APP_INTERNAL_URL:
         # Бот-процесс в Docker: берём кадр с app через HTTP (motion monitor уже держит RTSP)
         try:
             import httpx
+
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(f"{APP_INTERNAL_URL}/api/stream/snapshot")
                 if resp.status_code == 200:
@@ -55,8 +58,10 @@ async def snapshot() -> str | None:
     else:
         # App-процесс: берём кадр напрямую из motion monitor
         try:
-            from geckohome.services.motion import monitor as _monitor
             import cv2 as _cv2
+
+            from geckohome.services.motion import monitor as _monitor
+
             if _monitor.is_running():
                 for _ in range(30):
                     frame = _monitor.get_latest_frame()
@@ -78,13 +83,27 @@ async def snapshot() -> str | None:
     fd, path = tempfile.mkstemp(suffix=".jpg", prefix="gecko_snap_")
     os.close(fd)
     try:
-        result = await asyncio.to_thread(_run_ffmpeg, [
-            "ffmpeg", "-y", "-rtsp_transport", "tcp",
-            "-i", _source_url(),
-            "-frames:v", "1", "-update", "1", "-q:v", "2",
-            "-vf", "transpose=1",
-            path,
-        ], 15)
+        result = await asyncio.to_thread(
+            _run_ffmpeg,
+            [
+                "ffmpeg",
+                "-y",
+                "-rtsp_transport",
+                "tcp",
+                "-i",
+                _source_url(),
+                "-frames:v",
+                "1",
+                "-update",
+                "1",
+                "-q:v",
+                "2",
+                "-vf",
+                "transpose=1",
+                path,
+            ],
+            15,
+        )
         if os.path.exists(path) and os.path.getsize(path) > 0:
             return path
         log.error("Snapshot failed:\n%s", result.stderr.decode()[-500:])
@@ -103,17 +122,34 @@ async def clip(duration: int = 30) -> str | None:
     fd, path = tempfile.mkstemp(suffix=".mp4", prefix="gecko_clip_")
     os.close(fd)
     try:
-        result = await asyncio.to_thread(_run_ffmpeg, [
-            "ffmpeg", "-y", "-rtsp_transport", "tcp",
-            "-i", _source_url(),
-            "-t", str(duration),
-            "-vf", "transpose=1,scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-            "-pix_fmt", "yuv420p",
-            "-an",
-            "-movflags", "+faststart",
-            path,
-        ], duration + 40)
+        result = await asyncio.to_thread(
+            _run_ffmpeg,
+            [
+                "ffmpeg",
+                "-y",
+                "-rtsp_transport",
+                "tcp",
+                "-i",
+                _source_url(),
+                "-t",
+                str(duration),
+                "-vf",
+                "transpose=1,scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "23",
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+                "-movflags",
+                "+faststart",
+                path,
+            ],
+            duration + 40,
+        )
         if result.returncode == 0 and os.path.exists(path) and os.path.getsize(path) > 0:
             return path
         log.error("Clip failed:\n%s", result.stderr.decode()[-500:])
@@ -134,19 +170,41 @@ async def start_hls():
     playlist = os.path.join(HLS_DIR, "stream.m3u8")
     _hls_proc = subprocess.Popen(
         [
-            "ffmpeg", "-y", "-rtsp_transport", "tcp",
-            "-i", CAMERA_RTSP_URL,
-            "-vf", "transpose=1",
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-            "-pix_fmt", "yuv420p",
-            "-g", "30", "-keyint_min", "30", "-sc_threshold", "0",
-            "-metadata:s:v:0", "rotate=0",
+            "ffmpeg",
+            "-y",
+            "-rtsp_transport",
+            "tcp",
+            "-i",
+            CAMERA_RTSP_URL,
+            "-vf",
+            "transpose=1",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "23",
+            "-pix_fmt",
+            "yuv420p",
+            "-g",
+            "30",
+            "-keyint_min",
+            "30",
+            "-sc_threshold",
+            "0",
+            "-metadata:s:v:0",
+            "rotate=0",
             "-an",
-            "-f", "hls",
-            "-hls_time", "1",
-            "-hls_list_size", "3",
-            "-hls_flags", "delete_segments+append_list",
-            "-hls_segment_filename", os.path.join(HLS_DIR, "seg%03d.ts"),
+            "-f",
+            "hls",
+            "-hls_time",
+            "1",
+            "-hls_list_size",
+            "3",
+            "-hls_flags",
+            "delete_segments+append_list",
+            "-hls_segment_filename",
+            os.path.join(HLS_DIR, "seg%03d.ts"),
             playlist,
         ],
         stdout=subprocess.DEVNULL,

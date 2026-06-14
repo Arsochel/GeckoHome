@@ -3,15 +3,15 @@ import logging
 import os
 from datetime import datetime
 
-
-from geckohome.services import camera
-from geckohome.database import (
-    log_user_action, create_debug_token,
-)
 from geckohome.bot.access import is_super_admin
-from geckohome.bot.keyboards import main_keyboard
-from geckohome.bot.i18n import get_lang
 from geckohome.bot.formatters import status_text, user_status_text
+from geckohome.bot.i18n import get_lang
+from geckohome.bot.keyboards import main_keyboard
+from geckohome.database import (
+    create_debug_token,
+    log_user_action,
+)
+from geckohome.services import camera
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +64,8 @@ async def _handle_clip(query, user_id, duration: int = 30, ctx=None):
                 await query.message.reply_video(
                     f,
                     caption=f"🦎 Gecko Cam • {datetime.now().strftime('%H:%M:%S')}",
-                    width=720, height=1280,
+                    width=720,
+                    height=1280,
                     write_timeout=max(60, duration * 3),
                     read_timeout=max(60, duration * 3),
                 )
@@ -73,8 +74,6 @@ async def _handle_clip(query, user_id, duration: int = 30, ctx=None):
         await _replace_main(query, ctx, user_id, text, kb)
     else:
         await _safe_edit(query, text + f"\n\n{err_msg}", parse_mode="Markdown", reply_markup=kb)
-
-
 
 
 async def _handle_debug_link(query, user_id: int):
@@ -88,7 +87,11 @@ async def _handle_debug_link(query, user_id: int):
     except FileNotFoundError:
         tunnel = ""
     if not tunnel:
-        msg = "🛠 Туннель ещё не готов, попробуйте через минуту" if lang == "ru" else "🛠 Tunnel not ready, try again in a minute"
+        msg = (
+            "🛠 Туннель ещё не готов, попробуйте через минуту"
+            if lang == "ru"
+            else "🛠 Tunnel not ready, try again in a minute"
+        )
         await query.answer(msg, show_alert=True)
         return
     token = await create_debug_token(user_id, ttl_hours=24)
@@ -97,6 +100,6 @@ async def _handle_debug_link(query, user_id: int):
         text = f"🛠 *Дебаг (24ч)*\n{url}\n\nДействует 24 часа, ссылка одноразовая."
     else:
         text = f"🛠 *Debug access (24h)*\n{url}\n\nValid for 24 hours."
-    await query.message.chat.send_message(text, parse_mode="Markdown", disable_web_page_preview=True)
-
-
+    await query.message.chat.send_message(
+        text, parse_mode="Markdown", disable_web_page_preview=True
+    )

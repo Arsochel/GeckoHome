@@ -1,10 +1,11 @@
 import logging
 
-
-from geckohome.database import (
-    get_motion_event, update_motion_status, get_allowed_users,
-)
 from geckohome.bot.access import is_super_admin
+from geckohome.database import (
+    get_allowed_users,
+    get_motion_event,
+    update_motion_status,
+)
 
 log = logging.getLogger(__name__)
 

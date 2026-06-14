@@ -1,11 +1,12 @@
 import asyncio
 import logging
+
 import httpx
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
-from geckohome.services import tuya, camera
-from geckohome.database import log_lamp_event, save_photo, get_photos, get_photo_data, delete_photo
+from geckohome.database import delete_photo, get_photo_data, get_photos, log_lamp_event, save_photo
+from geckohome.services import camera, tuya
 from geckohome.web.routers.auth import get_current_user
 
 log = logging.getLogger(__name__)
@@ -18,12 +19,14 @@ _auth = Depends(get_current_user)
 @router.get("/status")
 async def get_status(_=_auth):
     temp = tuya.get_sensor("thermometer", "va_temperature")
-    hum  = tuya.get_sensor("humidifier",  "va_humidity") or tuya.get_sensor("thermometer", "va_humidity")
+    hum = tuya.get_sensor("humidifier", "va_humidity") or tuya.get_sensor(
+        "thermometer", "va_humidity"
+    )
     return {
-        "uv":          tuya.get_lamp_status("uv"),
-        "heat":        tuya.get_lamp_status("heat"),
+        "uv": tuya.get_lamp_status("uv"),
+        "heat": tuya.get_lamp_status("heat"),
         "temperature": round(temp / 10, 1) if temp is not None else None,
-        "humidity":    hum,
+        "humidity": hum,
     }
 
 
@@ -58,9 +61,11 @@ async def get_snapshot(_=_auth):
 async def get_clip(_=_auth):
     return await _clip_response(30)
 
+
 @router.get("/camera/clip3")
 async def get_clip3(_=_auth):
     return await _clip_response(180)
+
 
 async def _clip_response(duration: int):
     if not camera.is_configured():
@@ -70,8 +75,11 @@ async def _clip_response(duration: int):
         raise HTTPException(status_code=503, detail="Clip failed")
     with open(path, "rb") as f:
         data = f.read()
-    return Response(content=data, media_type="video/mp4",
-                    headers={"Content-Disposition": "inline; filename=gecko_clip.mp4"})
+    return Response(
+        content=data,
+        media_type="video/mp4",
+        headers={"Content-Disposition": "inline; filename=gecko_clip.mp4"},
+    )
 
 
 @router.get("/camera/gallery")
@@ -96,16 +104,16 @@ async def gallery_delete(photo_id: int, _=_auth):
 @router.get("/sensor-history")
 async def sensor_history(hours: int = 24, _=_auth):
     from geckohome.database import get_sensor_history
+
     rows = await get_sensor_history(hours=hours)
     return [
         {
             "t": r["recorded_at"],
             "temp": round(r["temperature"] / 10, 1) if r["temperature"] is not None else None,
-            "hum":  r["humidity"],
+            "hum": r["humidity"],
         }
         for r in rows
     ]
-
 
 
 @router.post("/camera/whep")
@@ -115,10 +123,15 @@ async def whep_offer(request: Request, _=_auth):
     body = await request.body()
     url = f"http://127.0.0.1:{camera.MEDIAMTX_PORT}/gecko/whep"
     async with httpx.AsyncClient() as client:
-        resp = await client.post(url, content=body,
-                                 headers={"Content-Type": "application/sdp"}, timeout=10)
+        resp = await client.post(
+            url, content=body, headers={"Content-Type": "application/sdp"}, timeout=10
+        )
     headers = {}
     if "Location" in resp.headers:
         headers["Location"] = resp.headers["Location"]
-    return Response(content=resp.content, status_code=resp.status_code,
-                    media_type="application/sdp", headers=headers)
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        media_type="application/sdp",
+        headers=headers,
+    )

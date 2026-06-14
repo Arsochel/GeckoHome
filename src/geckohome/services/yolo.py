@@ -20,6 +20,7 @@ def get_model():
         if not YOLO_MODEL_PATH or not os.path.exists(YOLO_MODEL_PATH):
             return None
         from ultralytics import YOLO
+
         _model = YOLO(YOLO_MODEL_PATH)
         log.info("YOLO loaded: %s", YOLO_MODEL_PATH)
     return _model

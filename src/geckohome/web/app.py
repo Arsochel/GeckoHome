@@ -2,29 +2,30 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
 from contextlib import asynccontextmanager
 
 from geckohome.logging_config import setup_logging
+
 setup_logging(enable_debug_buffer=True)
 
 log = logging.getLogger(__name__)
 
 
 import cv2
-
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from geckohome import paths
-from geckohome.config import SECRET_KEY, MEDIAMTX_BIN
+from geckohome.config import MEDIAMTX_BIN, SECRET_KEY
 from geckohome.database import init_db, load_last_feeding
-from geckohome.services import tuya, camera, tunnel
-from geckohome.services.scheduler import load_schedules, start as start_scheduler, shutdown as stop_scheduler
-from geckohome.services.motion import monitor as motion_monitor
+from geckohome.services import camera, tunnel, tuya
 from geckohome.services.highlights import update_gecko_state
-from geckohome.web.routers import auth, admin, devices, schedules, debug, stats
+from geckohome.services.motion import monitor as motion_monitor
+from geckohome.services.scheduler import load_schedules
+from geckohome.services.scheduler import shutdown as stop_scheduler
+from geckohome.services.scheduler import start as start_scheduler
+from geckohome.web.routers import admin, auth, debug, devices, schedules, stats
 
 
 @asynccontextmanager
@@ -35,9 +36,11 @@ async def lifespan(_: FastAPI):
     start_scheduler()
     tuya.start_listener()
     await motion_monitor.start()
+
     async def _initial_state_check():
         await asyncio.sleep(10)
         await update_gecko_state()
+
     asyncio.create_task(_initial_state_check())
     if camera.is_configured():
         try:
@@ -68,8 +71,7 @@ app.include_router(schedules.router)
 app.include_router(debug.router)
 app.include_router(stats.router)
 
-import httpx as _httpx
-from fastapi import Request, HTTPException
+from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
@@ -90,8 +92,9 @@ async def stream_page(request: Request):
 @app.get("/api/stream/snapshot")
 async def stream_snapshot_internal():
     frame = motion_monitor.get_latest_frame()
-    from fastapi.responses import Response
     from fastapi import HTTPException
+    from fastapi.responses import Response
+
     if frame is None:
         raise HTTPException(status_code=503, detail="No frame available")
     frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)

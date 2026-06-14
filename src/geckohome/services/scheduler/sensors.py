@@ -17,7 +17,7 @@ async def record_sensor_readings():
             asyncio.to_thread(tuya.get_sensor, "thermometer", "va_temperature"),
             timeout=20,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.warning("record_sensor_readings: temperature read timeout")
         temp = None
     try:
@@ -28,7 +28,7 @@ async def record_sensor_readings():
             asyncio.to_thread(tuya.get_sensor, "thermometer", "va_humidity"),
             timeout=20,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.warning("record_sensor_readings: humidity read timeout")
         hum = None
     await log_sensor_reading(temp, hum)
@@ -36,9 +36,9 @@ async def record_sensor_readings():
     alerts = []
     if temp is not None:
         if temp < TEMP_ALERT_MIN:
-            alerts.append(f"🥶 Температура низкая: *{temp/10:.1f}°C*")
+            alerts.append(f"🥶 Температура низкая: *{temp / 10:.1f}°C*")
         elif temp > TEMP_ALERT_MAX:
-            alerts.append(f"🔥 Температура высокая: *{temp/10:.1f}°C*")
+            alerts.append(f"🔥 Температура высокая: *{temp / 10:.1f}°C*")
     if hum is not None:
         if hum < HUM_ALERT_MIN:
             alerts.append(f"🏜 Влажность низкая: *{hum}%*")

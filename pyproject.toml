@@ -84,10 +84,15 @@ select = [
 ]
 ignore = [
     "E501",   # line length is handled by the formatter
+    "E402",   # logging is configured (setup_logging) before heavy imports on purpose
     "B008",   # FastAPI uses function calls in argument defaults (Depends)
     "RUF001", # ambiguous unicode (Cyrillic strings are intentional)
     "RUF002",
     "RUF003",
+    "RUF006", # background tasks are intentionally fire-and-forget (tunnel, state)
+    "RUF013", # implicit Optional in a few legacy signatures — non-breaking
+    "SIM105", # try/except/pass reads fine for the swallowed ALTER migrations
+    "SIM117", # nested `async with` (db + cursor) is clearer than a combined one
 ]
 
 [tool.ruff.lint.per-file-ignores]

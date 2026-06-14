@@ -4,8 +4,10 @@ from datetime import datetime, timedelta
 
 from geckohome.database._core import _db
 
+
 async def create_debug_token(user_id: int, ttl_hours: int = 24) -> str:
     import secrets
+
     token = secrets.token_urlsafe(16)
     now = datetime.now()
     expires = now + timedelta(hours=ttl_hours)
@@ -20,12 +22,14 @@ async def create_debug_token(user_id: int, ttl_hours: int = 24) -> str:
 async def validate_debug_token(token: str) -> int | None:
     if not token:
         return None
-    async with _db() as db:
-        async with db.execute(
+    async with (
+        _db() as db,
+        db.execute(
             "SELECT user_id, expires_at, revoked FROM debug_tokens WHERE token=?",
             (token,),
-        ) as cur:
-            row = await cur.fetchone()
+        ) as cur,
+    ):
+        row = await cur.fetchone()
     if not row or row["revoked"]:
         return None
     try:
@@ -44,9 +48,15 @@ async def purge_expired_debug_tokens():
             (datetime.now().isoformat(),),
         )
 
+
 # ── User actions ──
 
-_ACTION_COL = {"snapshot": "snapshots", "clip_30": "clips_30", "clip_180": "clips_3min", "stream": "streams"}
+_ACTION_COL = {
+    "snapshot": "snapshots",
+    "clip_30": "clips_30",
+    "clip_180": "clips_3min",
+    "stream": "streams",
+}
 
 
 async def log_user_action(user_id: int, username: str | None, action: str):
@@ -63,27 +73,31 @@ async def log_user_action(user_id: int, username: str | None, action: str):
 
 # ── Users ──
 
+
 async def get_allowed_users() -> list[dict]:
-    async with _db() as db:
-        async with db.execute("SELECT * FROM allowed_users") as cur:
-            return [dict(r) for r in await cur.fetchall()]
+    async with _db() as db, db.execute("SELECT * FROM allowed_users") as cur:
+        return [dict(r) for r in await cur.fetchall()]
 
 
 async def is_user_allowed(user_id: int) -> bool:
-    async with _db() as db:
-        async with db.execute(
+    async with (
+        _db() as db,
+        db.execute(
             "SELECT 1 FROM allowed_users WHERE user_id = ? AND revoked = 0", (user_id,)
-        ) as cur:
-            return await cur.fetchone() is not None
+        ) as cur,
+    ):
+        return await cur.fetchone() is not None
 
 
 async def was_user_revoked(user_id: int) -> bool:
     """Был ли пользователь заблокировавшим бота и лишён доступа."""
-    async with _db() as db:
-        async with db.execute(
+    async with (
+        _db() as db,
+        db.execute(
             "SELECT 1 FROM allowed_users WHERE user_id = ? AND revoked = 1", (user_id,)
-        ) as cur:
-            return await cur.fetchone() is not None
+        ) as cur,
+    ):
+        return await cur.fetchone() is not None
 
 
 async def add_allowed_user(user_id: int, username: str = None, first_name: str = None):
@@ -144,6 +158,7 @@ async def get_blocked_users() -> list[dict]:
 
 # ── Access requests ──
 
+
 async def add_access_request(user_id: int, username: str = None, first_name: str = None):
     async with _db(write=True) as db:
         await db.execute(
@@ -153,9 +168,8 @@ async def add_access_request(user_id: int, username: str = None, first_name: str
 
 
 async def get_access_requests() -> list[dict]:
-    async with _db() as db:
-        async with db.execute("SELECT * FROM access_requests") as cur:
-            return [dict(r) for r in await cur.fetchall()]
+    async with _db() as db, db.execute("SELECT * FROM access_requests") as cur:
+        return [dict(r) for r in await cur.fetchall()]
 
 
 async def remove_access_request(user_id: int):
@@ -171,9 +185,12 @@ async def has_pending_request(user_id: int) -> bool:
 
 # ── Lang ──
 
+
 async def get_user_lang(user_id: int) -> str | None:
     async with _db() as db:
-        async with db.execute("SELECT lang FROM allowed_users WHERE user_id = ?", (user_id,)) as cur:
+        async with db.execute(
+            "SELECT lang FROM allowed_users WHERE user_id = ?", (user_id,)
+        ) as cur:
             row = await cur.fetchone()
             return row["lang"] if row else None
 
@@ -185,5 +202,3 @@ async def set_user_lang(user_id: int, lang: str):
             " ON CONFLICT(user_id) DO UPDATE SET lang = excluded.lang",
             (user_id, lang),
         )
-
-

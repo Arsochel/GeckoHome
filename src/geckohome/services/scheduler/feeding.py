@@ -21,8 +21,8 @@ log = logging.getLogger(__name__)
 # (max_months, interval_days, crickets_min, crickets_max)
 # По статье: до 6 мес — ежедневно 5-7 шт; 6-12 мес — раз в 2 дня 5-6 шт; взрослые — раз в 3-4 дня 5-10 шт
 _FEEDING_SCHEDULE = [
-    (6,   1, 5,  7),
-    (12,  2, 5,  6),
+    (6, 1, 5, 7),
+    (12, 2, 5, 6),
     (999, 3, 5, 10),
 ]
 
@@ -30,6 +30,7 @@ _FEEDING_SCHEDULE = [
 def get_feeding_schedule(birthday: str) -> tuple[int, int, int]:
     """Возвращает (interval_days, crickets_min, crickets_max) по дате рождения."""
     from datetime import date
+
     bday = date.fromisoformat(birthday)
     today = date.today()
     months = (today.year - bday.year) * 12 + (today.month - bday.month)
@@ -91,6 +92,7 @@ async def check_birthday():
     if not birthday:
         return
     from datetime import date
+
     bday = date.fromisoformat(birthday)
     today = date.today()
 
@@ -109,6 +111,7 @@ async def check_birthday():
 
     blocked = await get_blocked_user_ids()
     from geckohome.config import TELEGRAM_ADMINS
+
     recipients = (TELEGRAM_SUPER_ADMINS | TELEGRAM_ADMINS) - blocked
     if not TELEGRAM_BOT_TOKEN or not recipients:
         return
@@ -125,6 +128,7 @@ async def check_birthday():
 
 async def check_cricket_alert():
     from geckohome.database import get_cricket_remaining
+
     remaining = await get_cricket_remaining()
     if remaining is None:
         return
@@ -135,9 +139,13 @@ async def check_cricket_alert():
         text = "🔴 *Сверчки закончились!* — купи новую партию"
     else:
         text = f"🟡 *Сверчков осталось мало: {remaining} шт.* — скоро покупать"
-    markup = {"inline_keyboard": [[
-        {"text": "🦗 Купил сверчков", "callback_data": "alert_cricket"},
-    ]]}
+    markup = {
+        "inline_keyboard": [
+            [
+                {"text": "🦗 Купил сверчков", "callback_data": "alert_cricket"},
+            ]
+        ]
+    }
     blocked = await get_blocked_user_ids()
     for uid in TELEGRAM_SUPER_ADMINS - blocked:
         await _send_or_edit_alert(uid, "cricket", text, markup)

@@ -1,19 +1,29 @@
 import asyncio
 import logging
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from geckohome.bot.access import check_access, is_super_admin
+from geckohome.bot.formatters import status_text, user_status_text
+from geckohome.bot.i18n import get_lang, set_lang, toggle_lang
+from geckohome.bot.keyboards import (
+    admin_keyboard,
+    feeding_keyboard,
+    main_keyboard,
+    schedules_keyboard,
+    stream_url,
+)
 from geckohome.config import STREAM_BASE_URL, TELEGRAM_SUPER_ADMINS
 from geckohome.database import (
+    add_allowed_user,
+    get_user_lang,
     has_pending_request,
-    add_allowed_user, update_user_info,
-    save_schedule, get_user_lang, set_user_blocked, was_user_revoked,
+    save_schedule,
+    set_user_blocked,
+    update_user_info,
+    was_user_revoked,
 )
-from geckohome.bot.access import check_access, is_super_admin
-from geckohome.bot.keyboards import main_keyboard, schedules_keyboard, admin_keyboard, feeding_keyboard, stream_url
-from geckohome.bot.i18n import get_lang, set_lang, toggle_lang
-from geckohome.bot.formatters import status_text, user_status_text
 
 log = logging.getLogger(__name__)
 
@@ -28,23 +38,6 @@ from geckohome.bot.handlers.access import (
     _handle_deny,
     _handle_remove_user,
     _handle_request_access,
-)
-from geckohome.bot.handlers.lamps import (
-    _handle_lamp,
-    _handle_refresh,
-    _handle_tunnel_restart,
-)
-from geckohome.bot.handlers.media import (
-    _handle_clip,
-    _handle_debug_link,
-    _handle_snapshot,
-)
-from geckohome.bot.handlers.schedules import (
-    _handle_sched_delete,
-    _handle_sched_new,
-    _handle_sched_select_lamp,
-    _handle_sched_toggle,
-    _handle_schedules,
 )
 from geckohome.bot.handlers.feeding import (
     _handle_alert_cricket,
@@ -63,9 +56,26 @@ from geckohome.bot.handlers.feeding import (
     _handle_fed_note,
     _handle_feeding_history,
 )
+from geckohome.bot.handlers.lamps import (
+    _handle_lamp,
+    _handle_refresh,
+    _handle_tunnel_restart,
+)
+from geckohome.bot.handlers.media import (
+    _handle_clip,
+    _handle_debug_link,
+    _handle_snapshot,
+)
 from geckohome.bot.handlers.motion import (
     _handle_motion_pub,
     _handle_motion_skip,
+)
+from geckohome.bot.handlers.schedules import (
+    _handle_sched_delete,
+    _handle_sched_new,
+    _handle_sched_select_lamp,
+    _handle_sched_toggle,
+    _handle_schedules,
 )
 
 
@@ -78,9 +88,9 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 "🦎 *Gecko Home*\n\nВернулся? Гекончик подумает над твоим поведением...",
                 parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📩 Запросить доступ", callback_data="request_access")]
-                ]),
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("📩 Запросить доступ", callback_data="request_access")]]
+                ),
             )
         elif await has_pending_request(user.id):
             await update.message.reply_text("⏳ Ваш запрос ожидает подтверждения.")
@@ -88,9 +98,9 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 "🦎 *Gecko Home*\n\nУ вас нет доступа к системе.",
                 parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📩 Запросить доступ", callback_data="request_access")]
-                ]),
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("📩 Запросить доступ", callback_data="request_access")]]
+                ),
             )
         return
     await update_user_info(user.id, user.username, user.first_name)
@@ -100,10 +110,14 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "🦎 *Gecko Home*\n\nChoose language / Выберите язык:",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_set_ru"),
-                InlineKeyboardButton("🇬🇧 English", callback_data="lang_set_en"),
-            ]]),
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_set_ru"),
+                        InlineKeyboardButton("🇬🇧 English", callback_data="lang_set_en"),
+                    ]
+                ]
+            ),
         )
         return
     lang = existing_lang
@@ -121,9 +135,12 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await ctx.bot.delete_message(update.effective_chat.id, prev_id)
         except Exception:
             pass
-    msg = await ctx.bot.send_message(update.effective_chat.id, text, parse_mode="Markdown", reply_markup=kb)
+    msg = await ctx.bot.send_message(
+        update.effective_chat.id, text, parse_mode="Markdown", reply_markup=kb
+    )
     ctx.user_data["status_msg_id"] = msg.message_id
-    from geckohome.services.scheduler import check_feeding_alert, check_cricket_alert
+    from geckohome.services.scheduler import check_cricket_alert, check_feeding_alert
+
     asyncio.create_task(check_feeding_alert())
     asyncio.create_task(check_cricket_alert())
 
@@ -147,11 +164,14 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await ctx.bot.delete_message(update.effective_chat.id, prev_id)
         except Exception:
             pass
-    msg = await ctx.bot.send_message(update.effective_chat.id, text, parse_mode="Markdown", reply_markup=kb)
+    msg = await ctx.bot.send_message(
+        update.effective_chat.id, text, parse_mode="Markdown", reply_markup=kb
+    )
     ctx.user_data["status_msg_id"] = msg.message_id
 
 
 # ─── Callbacks ───
+
 
 async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -187,13 +207,16 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data.startswith("timelapse_publish_") and is_super_admin(user_id):
         day = data.removeprefix("timelapse_publish_")
         import os
+
         from geckohome.services.timelapse import TIMELAPSE_VIDEOS_DIR, _send_video
+
         path = os.path.join(TIMELAPSE_VIDEOS_DIR, f"timelapse_{day}_15fps.mp4")
         if not os.path.exists(path):
             await query.answer("Файл не найден", show_alert=True)
             return
         from geckohome.config import TELEGRAM_ADMINS
         from geckohome.database import get_allowed_users, get_blocked_user_ids
+
         allowed = {u["user_id"] for u in await get_allowed_users()}
         blocked = await get_blocked_user_ids()
         everyone = (TELEGRAM_SUPER_ADMINS | TELEGRAM_ADMINS | allowed) - {user_id} - blocked
@@ -226,8 +249,10 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Lamps
     # Lamps — super admin only
     action_map = {
-        "uv_on": ("uv", True), "uv_off": ("uv", False),
-        "heat_on": ("heat", True), "heat_off": ("heat", False),
+        "uv_on": ("uv", True),
+        "uv_off": ("uv", False),
+        "heat_on": ("heat", True),
+        "heat_off": ("heat", False),
     }
     if data in action_map:
         if not is_super_admin(user_id):
@@ -276,8 +301,12 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Feeding menu
     if data == "feeding_menu" and is_super_admin(user_id):
         lang = await get_lang(user_id)
-        await _safe_edit(query, "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
-                         parse_mode="Markdown", reply_markup=await feeding_keyboard(lang))
+        await _safe_edit(
+            query,
+            "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
+            parse_mode="Markdown",
+            reply_markup=await feeding_keyboard(lang),
+        )
         return
 
     # Calendar
@@ -294,9 +323,13 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         return await _handle_fed_count(query, user_id, ctx, count)
     if data == "fed_hornworm" and is_super_admin(user_id):
-        return await _handle_fed_note(query, user_id, "hornworm", "🐛 Бражник записан!", "🐛 Hornworm logged!")
+        return await _handle_fed_note(
+            query, user_id, "hornworm", "🐛 Бражник записан!", "🐛 Hornworm logged!"
+        )
     if data == "fed_vitamins" and is_super_admin(user_id):
-        return await _handle_fed_note(query, user_id, "vitamins", "💊 Витамины записаны!", "💊 Vitamins logged!")
+        return await _handle_fed_note(
+            query, user_id, "vitamins", "💊 Витамины записаны!", "💊 Vitamins logged!"
+        )
     if data == "feeding_history" and is_super_admin(user_id):
         return await _handle_feeding_history(query)
     if data == "cricket_stats" and is_super_admin(user_id):
@@ -356,7 +389,6 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text.strip()
 
-
     if is_super_admin(user.id) and ctx.user_data.get("waiting_user_id"):
         ctx.user_data["waiting_user_id"] = False
         try:
@@ -366,7 +398,9 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         await add_allowed_user(new_id)
         kb = await admin_keyboard()
-        await update.message.reply_text(f"✅ Пользователь `{new_id}` добавлен.", parse_mode="Markdown", reply_markup=kb)
+        await update.message.reply_text(
+            f"✅ Пользователь `{new_id}` добавлен.", parse_mode="Markdown", reply_markup=kb
+        )
         return
 
     if ctx.user_data.get("sched_step") == "time":
@@ -385,7 +419,9 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ Максимум 16 часов.")
                 return
         except (ValueError, IndexError, AssertionError):
-            await update.message.reply_text("❌ Неверный формат. Пример: `08:00 20:00`", parse_mode="Markdown")
+            await update.message.reply_text(
+                "❌ Неверный формат. Пример: `08:00 20:00`", parse_mode="Markdown"
+            )
             return
         sched_id = f"{lamp}_{sh:02d}{sm:02d}"
         await save_schedule(sched_id, lamp, sh, sm, duration_h, eh, em)
@@ -398,4 +434,3 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ─── Private handlers ───
-

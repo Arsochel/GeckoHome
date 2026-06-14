@@ -9,6 +9,7 @@ log = logging.getLogger(__name__)
 
 # ── Photos (media db) ──
 
+
 async def save_photo(data: bytes, source: str = "web", caption: str = None) -> int:
     async with _media_db(write=True) as db:
         cur = await db.execute(
@@ -18,12 +19,14 @@ async def save_photo(data: bytes, source: str = "web", caption: str = None) -> i
 
 
 async def get_photos(limit: int = 20, offset: int = 0) -> list[dict]:
-    async with _media_db() as db:
-        async with db.execute(
+    async with (
+        _media_db() as db,
+        db.execute(
             "SELECT id, taken_at, source, caption FROM photos ORDER BY taken_at DESC LIMIT ? OFFSET ?",
             (limit, offset),
-        ) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+        ) as cur,
+    ):
+        return [dict(r) for r in await cur.fetchall()]
 
 
 async def get_photo_data(photo_id: int) -> bytes | None:
@@ -43,5 +46,3 @@ async def purge_old_photos():
         cur = await db.execute("DELETE FROM photos WHERE taken_at < datetime('now', '-1 hour')")
         if cur.rowcount:
             log.info("purged %d photos older than 1h", cur.rowcount)
-
-

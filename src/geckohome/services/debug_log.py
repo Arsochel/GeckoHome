@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from collections import deque
-from typing import Optional
 
 QUIET_LOGGERS = {"services.motion", "services.scheduler", "services.tuya", "services.camera"}
 _BUFFER_SIZE = 500
@@ -38,9 +37,7 @@ class QuietServiceFilter(logging.Filter):
     """Drops INFO/DEBUG from QUIET_LOGGERS so stdout stays clean."""
 
     def filter(self, record):
-        if record.name in QUIET_LOGGERS and record.levelno < logging.WARNING:
-            return False
-        return True
+        return not (record.name in QUIET_LOGGERS and record.levelno < logging.WARNING)
 
 
 def attach(stdout_handler: logging.Handler):
@@ -55,7 +52,7 @@ def attach(stdout_handler: logging.Handler):
     root.addHandler(rb)
 
 
-def get_recent(service: Optional[str] = None, limit: int = 200) -> list[dict]:
+def get_recent(service: str | None = None, limit: int = 200) -> list[dict]:
     if service and service != "all":
         key = f"services.{service}"
         return list(_buffers.get(key, deque()))[-limit:]

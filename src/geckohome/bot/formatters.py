@@ -1,53 +1,59 @@
 import asyncio
 from datetime import datetime
 
+from geckohome.database import (
+    get_cricket_remaining,
+    get_gecko_state,
+    get_gecko_zone,
+    get_last_feeding_cached,
+    get_next_feeding_supplements,
+)
 from geckohome.services import tuya
-from geckohome.database import get_last_feeding_cached, get_gecko_state, get_gecko_zone, get_next_feeding_supplements, get_cricket_remaining
 
 _ZONE_LABELS = {
     "ru": {
-        "skull":          "на черепе",
-        "water":          "у поилки",
-        "sauna":          "в бане",
-        "left of skull":  "слева от черепа",
+        "skull": "на черепе",
+        "water": "у поилки",
+        "sauna": "в бане",
+        "left of skull": "слева от черепа",
         "right of skull": "справа от черепа",
-        "below skull":    "под черепом",
-        "above skull":    "над черепом",
+        "below skull": "под черепом",
+        "above skull": "над черепом",
     },
     "en": {
-        "skull":          "on the skull",
-        "water":          "at the water bowl",
-        "sauna":          "in the sauna",
-        "left of skull":  "left of skull",
+        "skull": "on the skull",
+        "water": "at the water bowl",
+        "sauna": "in the sauna",
+        "left of skull": "left of skull",
         "right of skull": "right of skull",
-        "below skull":    "below skull",
-        "above skull":    "above skull",
+        "below skull": "below skull",
+        "above skull": "above skull",
     },
 }
 
 _STATE_LABELS = {
     "ru": {
-        "sleeping":    "😴 Спит",
-        "resting":     "🛌 Отдыхает",
-        "roaming":     "🏃 Шарится",
-        "basking":     "🌡 Греется",
-        "watching":    "👀 Смотрит в камеру",
-        "eating":      "🍽 Ест",
-        "drinking":    "💧 Пьёт",
-        "hiding":      "🫥 Прячется",
-        "weird":       "🤔 Ёрничает",
+        "sleeping": "😴 Спит",
+        "resting": "🛌 Отдыхает",
+        "roaming": "🏃 Шарится",
+        "basking": "🌡 Греется",
+        "watching": "👀 Смотрит в камеру",
+        "eating": "🍽 Ест",
+        "drinking": "💧 Пьёт",
+        "hiding": "🫥 Прячется",
+        "weird": "🤔 Ёрничает",
         "not_visible": "❓ Не видно",
     },
     "en": {
-        "sleeping":    "😴 Sleeping",
-        "resting":     "🛌 Resting",
-        "roaming":     "🏃 Roaming",
-        "basking":     "🌡 Basking",
-        "watching":    "👀 Watching the camera",
-        "eating":      "🍽 Eating",
-        "drinking":    "💧 Drinking",
-        "hiding":      "🫥 Hiding",
-        "weird":       "🤔 Being weird",
+        "sleeping": "😴 Sleeping",
+        "resting": "🛌 Resting",
+        "roaming": "🏃 Roaming",
+        "basking": "🌡 Basking",
+        "watching": "👀 Watching the camera",
+        "eating": "🍽 Eating",
+        "drinking": "💧 Drinking",
+        "hiding": "🫥 Hiding",
+        "weird": "🤔 Being weird",
         "not_visible": "❓ Not visible",
     },
 }
@@ -91,6 +97,7 @@ async def _zone_line(lang: str) -> str:
 async def _alert_block(lang: str) -> str:
     """Алерты о кормлении и сверчках — показываются прямо в статусе."""
     from geckohome.config import FEEDING_ALERT_DAYS
+
     lines = []
 
     last = get_last_feeding_cached()
@@ -115,9 +122,17 @@ async def _alert_block(lang: str) -> str:
     remaining = await get_cricket_remaining()
     if remaining is not None and remaining <= 5:
         if remaining == 0:
-            lines.append("🦗 *Сверчки закончились* — купи новую партию" if lang == "ru" else "🦗 *Crickets ran out* — buy a new batch")
+            lines.append(
+                "🦗 *Сверчки закончились* — купи новую партию"
+                if lang == "ru"
+                else "🦗 *Crickets ran out* — buy a new batch"
+            )
         else:
-            lines.append(f"🦗 *Сверчков осталось: {remaining} шт.* — скоро покупать" if lang == "ru" else f"🦗 *Crickets left: {remaining}* — buy soon")
+            lines.append(
+                f"🦗 *Сверчков осталось: {remaining} шт.* — скоро покупать"
+                if lang == "ru"
+                else f"🦗 *Crickets left: {remaining}* — buy soon"
+            )
 
     if not lines:
         return ""
@@ -142,10 +157,10 @@ async def user_status_text(lang: str = "ru") -> str:
     )
     if hum is None:
         hum = await asyncio.to_thread(tuya.get_sensor, "thermometer", "va_humidity")
-    now  = datetime.now().strftime("%H:%M:%S")
+    now = datetime.now().strftime("%H:%M:%S")
 
     temp_str = f"{temp / 10:.1f}°C" if temp is not None else "—"
-    hum_str  = f"{hum}%"            if hum  is not None else "—"
+    hum_str = f"{hum}%" if hum is not None else "—"
 
     if lang == "en":
         return (
@@ -185,12 +200,14 @@ async def status_text(lang: str = "ru") -> str:
         asyncio.to_thread(tuya.get_lamp_status, "uv"),
         asyncio.to_thread(tuya.get_lamp_status, "heat"),
         asyncio.to_thread(tuya.get_sensor, "thermometer", "va_temperature"),
-        asyncio.to_thread(tuya.get_sensor, "humidifier", "va_humidity") if tuya.DEVICE_IDS.get("humidifier") else asyncio.to_thread(tuya.get_sensor, "thermometer", "va_humidity"),
+        asyncio.to_thread(tuya.get_sensor, "humidifier", "va_humidity")
+        if tuya.DEVICE_IDS.get("humidifier")
+        else asyncio.to_thread(tuya.get_sensor, "thermometer", "va_humidity"),
     )
-    now  = datetime.now().strftime("%H:%M:%S")
+    now = datetime.now().strftime("%H:%M:%S")
 
     temp_str = f"{temp / 10:.1f}°C" if temp is not None else "—"
-    hum_str  = f"{hum}%"            if hum  is not None else "—"
+    hum_str = f"{hum}%" if hum is not None else "—"
 
     if lang == "en":
         return (

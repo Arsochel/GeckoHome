@@ -27,6 +27,7 @@ async def _send_alert(text: str):
         return
     _last_alert_time = now
     from geckohome.config import TELEGRAM_ADMINS
+
     blocked = await get_blocked_user_ids()
     _alert_recipients = (TELEGRAM_SUPER_ADMINS | TELEGRAM_ADMINS) - blocked
     if not TELEGRAM_BOT_TOKEN or not _alert_recipients:

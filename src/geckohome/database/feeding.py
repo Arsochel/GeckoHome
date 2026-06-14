@@ -74,10 +74,9 @@ async def get_last_feeding_db() -> datetime | None:
 
 
 async def get_feeding_count() -> int:
-    async with _db() as db:
-        async with db.execute("SELECT COUNT(*) as cnt FROM feedings") as cur:
-            row = await cur.fetchone()
-            return row["cnt"] if row else 0
+    async with _db() as db, db.execute("SELECT COUNT(*) as cnt FROM feedings") as cur:
+        row = await cur.fetchone()
+        return row["cnt"] if row else 0
 
 
 async def get_last_note_date(note: str) -> datetime | None:
@@ -85,17 +84,21 @@ async def get_last_note_date(note: str) -> datetime | None:
     col = {"vitamins": "vitamins", "hornworm": "hornworm"}.get(note)
     if not col:
         return None
-    async with _db() as db:
-        async with db.execute(
+    async with (
+        _db() as db,
+        db.execute(
             f"SELECT fed_at FROM feedings WHERE {col}=1 ORDER BY fed_at DESC LIMIT 1"
-        ) as cur:
-            row = await cur.fetchone()
-            return datetime.fromisoformat(row["fed_at"]) if row else None
+        ) as cur,
+    ):
+        row = await cur.fetchone()
+        return datetime.fromisoformat(row["fed_at"]) if row else None
 
 
 async def log_cricket_purchase(count: int = 20):
     async with _db(write=True) as db:
-        await db.execute("INSERT INTO cricket_batches (bought_at, count) VALUES (?, ?)", (datetime.now(), count))
+        await db.execute(
+            "INSERT INTO cricket_batches (bought_at, count) VALUES (?, ?)", (datetime.now(), count)
+        )
 
 
 async def log_cricket_ran_out():
@@ -103,13 +106,19 @@ async def log_cricket_ran_out():
     LIFESPAN = 6
     ran_out_date = datetime.now() - timedelta(days=LIFESPAN)
     async with _db(write=True) as db:
-        async with db.execute("SELECT id FROM cricket_batches ORDER BY bought_at DESC LIMIT 1") as cur:
+        async with db.execute(
+            "SELECT id FROM cricket_batches ORDER BY bought_at DESC LIMIT 1"
+        ) as cur:
             row = await cur.fetchone()
         if row:
-            await db.execute("UPDATE cricket_batches SET bought_at = ?, count = 0 WHERE id = ?",
-                             (ran_out_date, row["id"]))
+            await db.execute(
+                "UPDATE cricket_batches SET bought_at = ?, count = 0 WHERE id = ?",
+                (ran_out_date, row["id"]),
+            )
         else:
-            await db.execute("INSERT INTO cricket_batches (bought_at, count) VALUES (?, ?)", (ran_out_date, 0))
+            await db.execute(
+                "INSERT INTO cricket_batches (bought_at, count) VALUES (?, ?)", (ran_out_date, 0)
+            )
 
 
 async def get_last_cricket_purchase() -> tuple[datetime | None, int]:
@@ -150,12 +159,14 @@ async def log_cricket_deaths(count: int):
 
 async def get_feedings_count_since(since: datetime) -> int:
     """Количество кормлений начиная с даты since (не включая)."""
-    async with _db() as db:
-        async with db.execute(
+    async with (
+        _db() as db,
+        db.execute(
             "SELECT COUNT(*) as cnt FROM feedings WHERE fed_at > ?", (since.isoformat(),)
-        ) as cur:
-            row = await cur.fetchone()
-            return row["cnt"] if row else 0
+        ) as cur,
+    ):
+        row = await cur.fetchone()
+        return row["cnt"] if row else 0
 
 
 async def get_next_feeding_supplements() -> list[str]:
@@ -173,10 +184,12 @@ async def get_next_feeding_supplements() -> list[str]:
 
 # ── Feeding history ──
 
+
 async def get_feeding_history(limit: int = 10) -> list[dict]:
     async with _db() as db:
         async with db.execute(
-            "SELECT fed_at, crickets, vitamins, hornworm FROM feedings ORDER BY fed_at DESC LIMIT ?", (limit,)
+            "SELECT fed_at, crickets, vitamins, hornworm FROM feedings ORDER BY fed_at DESC LIMIT ?",
+            (limit,),
         ) as cur:
             return [
                 {
@@ -191,13 +204,13 @@ async def get_feeding_history(limit: int = 10) -> list[dict]:
 
 async def get_cricket_stats() -> dict:
     """Суммарная статистика по количеству сверчков."""
-    async with _db() as db:
-        async with db.execute(
+    async with (
+        _db() as db,
+        db.execute(
             "SELECT COALESCE(SUM(crickets), 0) as total, COUNT(*) as count"
             " FROM feedings WHERE crickets IS NOT NULL"
-        ) as cur:
-            row = await cur.fetchone()
+        ) as cur,
+    ):
+        row = await cur.fetchone()
     total, count = row["total"] or 0, row["count"] or 0
     return {"total": total, "count": count, "avg": round(total / count, 1) if count else 0}
-
-

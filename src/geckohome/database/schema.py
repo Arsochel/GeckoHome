@@ -76,16 +76,24 @@ async def init_db():
         """)
 
         # schedules migrations
-        for col in ("end_hour INTEGER NOT NULL DEFAULT 0",
-                    "end_minute INTEGER NOT NULL DEFAULT 0",
-                    "duration_h REAL NOT NULL DEFAULT 0"):
+        for col in (
+            "end_hour INTEGER NOT NULL DEFAULT 0",
+            "end_minute INTEGER NOT NULL DEFAULT 0",
+            "duration_h REAL NOT NULL DEFAULT 0",
+        ):
             try:
                 await db.execute(f"ALTER TABLE schedules ADD COLUMN {col}")
             except Exception:
                 pass
 
         # allowed_users migrations
-        for col in ("first_name TEXT", "lang TEXT", "blocked_bot INTEGER DEFAULT 0", "blocked_at DATETIME", "revoked INTEGER DEFAULT 0"):
+        for col in (
+            "first_name TEXT",
+            "lang TEXT",
+            "blocked_bot INTEGER DEFAULT 0",
+            "blocked_at DATETIME",
+            "revoked INTEGER DEFAULT 0",
+        ):
             try:
                 await db.execute(f"ALTER TABLE allowed_users ADD COLUMN {col}")
             except Exception:
@@ -96,8 +104,12 @@ async def init_db():
             pass
 
         # feedings migrations (DBs created before these columns existed)
-        for col in ("crickets INTEGER", "vitamins INTEGER DEFAULT 0",
-                    "hornworm INTEGER DEFAULT 0", "notes TEXT"):
+        for col in (
+            "crickets INTEGER",
+            "vitamins INTEGER DEFAULT 0",
+            "hornworm INTEGER DEFAULT 0",
+            "notes TEXT",
+        ):
             try:
                 await db.execute(f"ALTER TABLE feedings ADD COLUMN {col}")
             except Exception:
@@ -235,5 +247,3 @@ async def _init_media_db():
             )
         """)
         await db.commit()
-
-

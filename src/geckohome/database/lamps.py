@@ -10,6 +10,7 @@ log = logging.getLogger(__name__)
 
 # ── Lamp events ──
 
+
 async def log_lamp_event(lamp_type: str, action: str, source: str):
     async with _db(write=True) as db:
         await db.execute(
@@ -40,5 +41,3 @@ async def purge_lamp_events():
         cur = await db.execute("DELETE FROM lamp_events WHERE occurred_at < ?", (cutoff,))
         if cur.rowcount:
             log.info("purged %d lamp_events older than 2 days", cur.rowcount)
-
-

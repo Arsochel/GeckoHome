@@ -2,13 +2,12 @@ import logging
 import secrets
 
 import bcrypt
-
-from fastapi import APIRouter, HTTPException, Request, Form, Depends
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from geckohome import paths
-from geckohome.config import ADMIN_USERNAME, ADMIN_PASSWORD_HASH
+from geckohome.config import ADMIN_PASSWORD_HASH, ADMIN_USERNAME
 
 log = logging.getLogger(__name__)
 

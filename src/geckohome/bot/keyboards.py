@@ -1,14 +1,12 @@
 import asyncio
-import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
-from geckohome.services import tuya, camera
-from geckohome.database import get_schedules, get_access_requests
 from geckohome.bot.access import is_super_admin
 from geckohome.bot.i18n import get_lang
 from geckohome.config import STREAM_BASE_URL
-
+from geckohome.database import get_access_requests, get_schedules
+from geckohome.services import camera, tuya
 
 _CAM_LABELS = {
     "en": {
@@ -101,8 +99,6 @@ def stream_url() -> str | None:
     return url
 
 
-
-
 def _camera_rows(lang: str = "ru", super_admin: bool = False) -> list:
     if not camera.is_configured():
         return []
@@ -149,21 +145,25 @@ async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
         asyncio.to_thread(tuya.get_lamp_status, "heat"),
     )
 
-    uv_on   = uv.get("switch") is True
+    uv_on = uv.get("switch") is True
     heat_on = heat.get("switch") is True
 
     requests = await get_access_requests()
     L = _MAIN_LABELS.get(lang, _MAIN_LABELS["ru"])
     admin_label = L["settings_pending"].format(n=len(requests)) if requests else L["settings"]
     rows = [
-        [InlineKeyboardButton(
-            L["uv_off"] if uv_on else L["uv_on"],
-            callback_data="uv_off" if uv_on else "uv_on",
-        )],
-        [InlineKeyboardButton(
-            L["heat_off"] if heat_on else L["heat_on"],
-            callback_data="heat_off" if heat_on else "heat_on",
-        )],
+        [
+            InlineKeyboardButton(
+                L["uv_off"] if uv_on else L["uv_on"],
+                callback_data="uv_off" if uv_on else "uv_on",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                L["heat_off"] if heat_on else L["heat_on"],
+                callback_data="heat_off" if heat_on else "heat_on",
+            )
+        ],
         *_camera_rows(lang, super_admin=True),
         [InlineKeyboardButton(L["feeding"], callback_data="feeding_menu")],
         [InlineKeyboardButton(L["schedules"], callback_data="schedules")],
@@ -174,7 +174,9 @@ async def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def cricket_count_keyboard(lang: str = "ru", prefix: str = "fed_count_", back: str = "feeding_menu") -> InlineKeyboardMarkup:
+def cricket_count_keyboard(
+    lang: str = "ru", prefix: str = "fed_count_", back: str = "feeding_menu"
+) -> InlineKeyboardMarkup:
     counts = [3, 4, 5, 6]
     buttons = [InlineKeyboardButton(f"{n}🦗", callback_data=f"{prefix}{n}") for n in counts]
     back_label = "◀ Back" if lang == "en" else "◀ Назад"
@@ -185,10 +187,14 @@ async def feeding_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
     L = _FEEDING_LABELS.get(lang, _FEEDING_LABELS["ru"])
     rows = [
         [InlineKeyboardButton(L["fed"], callback_data="fed")],
-        [InlineKeyboardButton(L["hornworm"], callback_data="fed_hornworm"),
-         InlineKeyboardButton(L["vitamins"], callback_data="fed_vitamins")],
-        [InlineKeyboardButton(L["cricket_bought"], callback_data="cricket_bought"),
-         InlineKeyboardButton(L["cricket_out"], callback_data="cricket_out")],
+        [
+            InlineKeyboardButton(L["hornworm"], callback_data="fed_hornworm"),
+            InlineKeyboardButton(L["vitamins"], callback_data="fed_vitamins"),
+        ],
+        [
+            InlineKeyboardButton(L["cricket_bought"], callback_data="cricket_bought"),
+            InlineKeyboardButton(L["cricket_out"], callback_data="cricket_out"),
+        ],
         [InlineKeyboardButton(L["calendar"], callback_data="calendar")],
         [InlineKeyboardButton(L["history"], callback_data="feeding_history")],
         [InlineKeyboardButton(L["back"], callback_data="back_main")],
@@ -200,17 +206,19 @@ async def schedules_keyboard() -> InlineKeyboardMarkup:
     scheds = await get_schedules()
     rows = []
     for s in scheds:
-        lamp  = "🔦 UV" if s["lamp_type"] == "uv" else "🔥 Тепл."
+        lamp = "🔦 UV" if s["lamp_type"] == "uv" else "🔥 Тепл."
         start = f"{s['hour']:02d}:{s['minute']:02d}"
-        end   = f"{s['end_hour']:02d}:{s['end_minute']:02d}"
-        icon  = "⏸" if not s["paused"] else "▶️"
-        rows.append([
-            InlineKeyboardButton(f"{lamp}  {start} → {end}", callback_data="noop"),
-            InlineKeyboardButton(icon, callback_data=f"sched_toggle_{s['id']}"),
-            InlineKeyboardButton("✕",  callback_data=f"sched_del_{s['id']}"),
-        ])
+        end = f"{s['end_hour']:02d}:{s['end_minute']:02d}"
+        icon = "⏸" if not s["paused"] else "▶️"
+        rows.append(
+            [
+                InlineKeyboardButton(f"{lamp}  {start} → {end}", callback_data="noop"),
+                InlineKeyboardButton(icon, callback_data=f"sched_toggle_{s['id']}"),
+                InlineKeyboardButton("✕", callback_data=f"sched_del_{s['id']}"),
+            ]
+        )
     rows.append([InlineKeyboardButton("➕ Новое расписание", callback_data="sched_new")])
-    rows.append([InlineKeyboardButton("◀ Назад",             callback_data="back_main")])
+    rows.append([InlineKeyboardButton("◀ Назад", callback_data="back_main")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -219,14 +227,22 @@ async def admin_keyboard() -> InlineKeyboardMarkup:
     rows = []
 
     if requests:
-        rows.append([InlineKeyboardButton(f"⏳ Запросы доступа ({len(requests)})", callback_data="noop")])
+        rows.append(
+            [InlineKeyboardButton(f"⏳ Запросы доступа ({len(requests)})", callback_data="noop")]
+        )
         for r in requests:
-            name = f"@{r['username']}" if r.get("username") else r.get("first_name") or str(r["user_id"])
-            rows.append([
-                InlineKeyboardButton(name, callback_data="noop"),
-                InlineKeyboardButton("✅", callback_data=f"approve_{r['user_id']}"),
-                InlineKeyboardButton("❌", callback_data=f"deny_{r['user_id']}"),
-            ])
+            name = (
+                f"@{r['username']}"
+                if r.get("username")
+                else r.get("first_name") or str(r["user_id"])
+            )
+            rows.append(
+                [
+                    InlineKeyboardButton(name, callback_data="noop"),
+                    InlineKeyboardButton("✅", callback_data=f"approve_{r['user_id']}"),
+                    InlineKeyboardButton("❌", callback_data=f"deny_{r['user_id']}"),
+                ]
+            )
 
     rows.append([InlineKeyboardButton("➕ Добавить по ID", callback_data="add_user")])
     rows.append([InlineKeyboardButton("🔄 Перезапустить туннель", callback_data="tunnel_restart")])

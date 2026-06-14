@@ -1,30 +1,30 @@
 import logging
 import sys
 
-_RESET  = "\033[0m"
-_GREY   = "\033[38;5;240m"
-_CYAN   = "\033[36m"
-_GREEN  = "\033[32m"
+_RESET = "\033[0m"
+_GREY = "\033[38;5;240m"
+_CYAN = "\033[36m"
+_GREEN = "\033[32m"
 _YELLOW = "\033[33m"
-_RED    = "\033[31m"
-_BRED   = "\033[1;31m"
-_DIM    = "\033[2m"
+_RED = "\033[31m"
+_BRED = "\033[1;31m"
+_DIM = "\033[2m"
 
 _LEVEL_COLOR = {
-    logging.DEBUG:    _GREY,
-    logging.INFO:     _GREEN,
-    logging.WARNING:  _YELLOW,
-    logging.ERROR:    _RED,
+    logging.DEBUG: _GREY,
+    logging.INFO: _GREEN,
+    logging.WARNING: _YELLOW,
+    logging.ERROR: _RED,
     logging.CRITICAL: _BRED,
 }
 
 
 class _ColorFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        lc   = _LEVEL_COLOR.get(record.levelno, _RESET)
+        lc = _LEVEL_COLOR.get(record.levelno, _RESET)
         time = self.formatTime(record, "%H:%M:%S")
         name = record.name[:20]
-        msg  = record.getMessage()
+        msg = record.getMessage()
         if record.exc_info:
             msg += "\n" + self.formatException(record.exc_info)
         return (
@@ -65,6 +65,7 @@ def setup_logging(debug: bool = False, enable_debug_buffer: bool = False) -> log
     # не наша вина, PTB сам ретраит — логируем как warning, не error
     class _TgNetworkFilter(logging.Filter):
         _TRANSIENT = ("Bad Gateway", "Service Unavailable", "Gateway Timeout")
+
         def filter(self, record: logging.LogRecord) -> bool:
             if record.levelno >= logging.ERROR:
                 msg = record.getMessage()
@@ -77,6 +78,7 @@ def setup_logging(debug: bool = False, enable_debug_buffer: bool = False) -> log
 
     if enable_debug_buffer:
         from geckohome.services.debug_log import attach
+
         attach(handler)
 
     return handler

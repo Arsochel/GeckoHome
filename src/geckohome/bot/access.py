@@ -1,4 +1,4 @@
-from geckohome.config import TELEGRAM_SUPER_ADMINS, TELEGRAM_ADMINS
+from geckohome.config import TELEGRAM_ADMINS, TELEGRAM_SUPER_ADMINS
 from geckohome.database import is_user_allowed
 
 

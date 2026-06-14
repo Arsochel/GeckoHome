@@ -1,8 +1,10 @@
-from datetime import datetime, timedelta, date as date_type
+from datetime import date as date_type
+from datetime import datetime, timedelta
+
+import aiosqlite
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-import aiosqlite
 
 from geckohome import paths
 from geckohome.database import DB_PATH, get_cricket_remaining
@@ -48,7 +50,9 @@ async def stats_summary(_=_auth):
         dates = [datetime.fromisoformat(r["fed_at"]) for r in rows]
         avg_interval = None
         if len(dates) >= 2:
-            intervals = [(dates[i + 1] - dates[i]).total_seconds() / 86400 for i in range(len(dates) - 1)]
+            intervals = [
+                (dates[i + 1] - dates[i]).total_seconds() / 86400 for i in range(len(dates) - 1)
+            ]
             avg_interval = round(sum(intervals) / len(intervals), 1)
 
         cur = await db.execute(
@@ -118,7 +122,10 @@ async def stats_cricket(_=_auth):
         cur = await db.execute(
             "SELECT bought_at, count, COALESCE(deaths, 0) as deaths FROM cricket_batches WHERE count > 0 ORDER BY bought_at"
         )
-        batches = [{"date": r["bought_at"][:10], "count": max(0, int(r["count"]) - int(r["deaths"]))} for r in await cur.fetchall()]
+        batches = [
+            {"date": r["bought_at"][:10], "count": max(0, int(r["count"]) - int(r["deaths"]))}
+            for r in await cur.fetchall()
+        ]
         cur = await db.execute(
             "SELECT DATE(fed_at, 'localtime') as day, SUM(crickets) as eaten"
             " FROM feedings WHERE crickets IS NOT NULL GROUP BY day ORDER BY day"
@@ -140,7 +147,9 @@ async def stats_cricket(_=_auth):
             if b["date"] <= day_str:
                 current_batch = b
         if current_batch:
-            eaten = sum(v for k, v in feedings_by_day.items() if current_batch["date"] <= k <= day_str)
+            eaten = sum(
+                v for k, v in feedings_by_day.items() if current_batch["date"] <= k <= day_str
+            )
             remaining = max(0, current_batch["count"] - eaten)
         else:
             remaining = 0

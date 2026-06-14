@@ -2,17 +2,19 @@
 
 from geckohome.database._core import _db
 
-
 # ── Alert messages ──
 
+
 async def get_alert_message(user_id: int, alert_type: str) -> int | None:
-    async with _db() as db:
-        async with db.execute(
+    async with (
+        _db() as db,
+        db.execute(
             "SELECT message_id FROM alert_messages WHERE user_id=? AND alert_type=?",
             (user_id, alert_type),
-        ) as cur:
-            row = await cur.fetchone()
-            return row["message_id"] if row else None
+        ) as cur,
+    ):
+        row = await cur.fetchone()
+        return row["message_id"] if row else None
 
 
 async def save_alert_message(user_id: int, alert_type: str, message_id: int):

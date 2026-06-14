@@ -58,21 +58,25 @@ async def sync_lamp_schedules():
             asyncio.to_thread(tuya.get_sensor, "thermometer", "va_temperature"),
             timeout=15,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         temp_raw = None
     temp_c = temp_raw / 10.0 if temp_raw is not None else None
 
     saved = await get_schedules()
     for lamp in ("uv", "heat"):
         should_be_on = any(
-            not s.get("paused") and s["lamp_type"] == lamp and _is_lamp_on_now(s["hour"], s["minute"], s["duration_h"])
+            not s.get("paused")
+            and s["lamp_type"] == lamp
+            and _is_lamp_on_now(s["hour"], s["minute"], s["duration_h"])
             for s in saved
         )
         status = tuya.get_lamp_status(lamp)
         currently_on = status.get("switch") is True
         if should_be_on and not currently_on:
             if temp_c is not None and temp_c > 34:
-                log.debug("sync_lamps: %s should be ON but temp=%.1f°C > 34, skipping", lamp, temp_c)
+                log.debug(
+                    "sync_lamps: %s should be ON but temp=%.1f°C > 34, skipping", lamp, temp_c
+                )
                 continue
             log.info("sync_lamps: %s should be ON (schedule), turning on", lamp)
             await asyncio.to_thread(tuya.switch_lamp, lamp, True)
@@ -91,7 +95,7 @@ async def check_lamp_temperature():
             asyncio.to_thread(tuya.get_sensor, "thermometer", "va_temperature"),
             timeout=20,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.warning("temp_guard: sensor timeout, skipping")
         return
     if temp is None:
@@ -113,13 +117,16 @@ async def check_lamp_temperature():
             log.warning("temp_guard: %.1f°C > 34 — выключаю %s лампу", temp_c, lamp)
             await asyncio.to_thread(tuya.switch_lamp, lamp, False)
             await log_lamp_event(lamp, "off", "temp_guard")
-            await _send_alert(f"🌡 *Перегрев {temp_c:.1f}°C* — автоматически выключена {lamp.upper()} лампа")
+            await _send_alert(
+                f"🌡 *Перегрев {temp_c:.1f}°C* — автоматически выключена {lamp.upper()} лампа"
+            )
         elif temp_c <= 30 and not currently_on:
             log.info("temp_guard: %.1f°C ≤ 30 — включаю %s лампу", temp_c, lamp)
             await asyncio.to_thread(tuya.switch_lamp, lamp, True)
             await log_lamp_event(lamp, "on", "temp_guard")
-            await _send_alert(f"🌡 *Остыло до {temp_c:.1f}°C* — автоматически включена {lamp.upper()} лампа")
-
+            await _send_alert(
+                f"🌡 *Остыло до {temp_c:.1f}°C* — автоматически включена {lamp.upper()} лампа"
+            )
 
 
 async def _recover_lamps(schedules: list[dict]):
@@ -147,4 +154,3 @@ async def _recover_lamps(schedules: list[dict]):
             log.info("recovery: turning off %s lamp (outside schedule window)", lamp)
             tuya.switch_lamp(lamp, False)
             await log_lamp_event(lamp, "off", "scheduler:recovery")
-

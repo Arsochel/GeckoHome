@@ -2,10 +2,20 @@ import logging
 import socket
 import threading
 import time
-import tinytuya
-from geckohome.config import DEVICE_IDS, DEVICE_LOCAL, TUYA_CLOUD_KEY, TUYA_CLOUD_SECRET, TUYA_CLOUD_REGION
 
-_lamp_cache: dict[str, dict] = {}  # lamp_type → {"switch": bool|None, "online": bool|None, "ts": float}
+import tinytuya
+
+from geckohome.config import (
+    DEVICE_IDS,
+    DEVICE_LOCAL,
+    TUYA_CLOUD_KEY,
+    TUYA_CLOUD_REGION,
+    TUYA_CLOUD_SECRET,
+)
+
+_lamp_cache: dict[
+    str, dict
+] = {}  # lamp_type → {"switch": bool|None, "online": bool|None, "ts": float}
 _LAMP_CACHE_TTL = 15  # seconds
 
 _sensor_value_cache: dict[str, dict] = {}  # "sensor_type:code" → {"value": any, "ts": float}
@@ -14,6 +24,7 @@ _SENSOR_CACHE_TTL = 120  # seconds — заполняется планировщ
 log = logging.getLogger(__name__)
 
 _cloud = None
+
 
 def _get_cloud():
     global _cloud
@@ -75,7 +86,7 @@ def _listener_thread():
                     log.debug("decode broadcast: %s", e)
                     continue
                 temp = dps.get("1") or dps.get(1)
-                hum  = dps.get("2") or dps.get(2)
+                hum = dps.get("2") or dps.get(2)
                 if temp is not None or hum is not None:
                     first_ever = device_id not in _sensor_cache
                     with _listener_lock:
@@ -88,7 +99,7 @@ def _listener_thread():
                     log.debug("local broadcast: %s temp=%s hum=%s", addr[0], temp, hum)
                     if first_ever:
                         _notify_thermometer_online(temp, hum)
-            except socket.timeout:
+            except TimeoutError:
                 pass
             except Exception as e:
                 log.error("listener error: %s", e)
@@ -96,13 +107,18 @@ def _listener_thread():
 
 
 def _notify_thermometer_online(temp, hum):
-    import httpx, threading
+    import threading
+
+    import httpx
+
     from geckohome.config import TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS
+
     if not TELEGRAM_BOT_TOKEN:
         return
-    t_str = f"{temp/10:.1f}°C" if temp is not None else "—"
+    t_str = f"{temp / 10:.1f}°C" if temp is not None else "—"
     h_str = f"{hum}%" if hum is not None else "—"
     text = f"🌡 Термометр онлайн (локально)\nТемпература: *{t_str}*, влажность: *{h_str}*"
+
     def _send():
         for uid in TELEGRAM_SUPER_ADMINS:
             try:
@@ -113,22 +129,25 @@ def _notify_thermometer_online(temp, hum):
                 )
             except Exception as e:
                 log.debug("tg notify thermometer: %s", e)
+
     threading.Thread(target=_send, daemon=True).start()
 
 
 async def warm_lamp_cache():
     """Восстанавливает последнее состояние ламп из lamp_events на старте."""
     from geckohome.database import get_last_lamp_states
+
     states = await get_last_lamp_states()
     for lamp, switch in states.items():
         _lamp_cache[lamp] = {"online": None, "switch": switch, "ts": 0}
     if states:
-        log.info("lamp cache warmed from DB: %s", {k: v for k, v in states.items()})
+        log.info("lamp cache warmed from DB: %s", dict(states.items()))
 
 
 async def warm_sensor_cache():
     """Заполняет кэш сенсоров из последней записи в БД — чтобы первый /start был мгновенным."""
     from geckohome.database import get_last_sensor_reading
+
     temp, hum = await get_last_sensor_reading()
     if temp is not None:
         _sensor_value_cache["thermometer:va_temperature"] = {"value": temp, "ts": time.time()}
@@ -161,6 +180,8 @@ def get_sensor_cached(sensor_type: str, code: str):
     if code == "va_humidity":
         return entry.get("hum")
     return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -230,12 +251,13 @@ def get_lamp_status(lamp_type: str) -> dict:
 _CODE_TO_DPS = {"va_temperature": "1", "va_humidity": "2"}
 _CLOUD_CODES = {
     "va_temperature": "temp_current",
-    "va_humidity":    "humidity_value",
+    "va_humidity": "humidity_value",
 }
 
 
 def _get_sensor_cloud(device_id: str, code: str):
     import socket
+
     cloud = _get_cloud()
     if not cloud or not device_id:
         return None

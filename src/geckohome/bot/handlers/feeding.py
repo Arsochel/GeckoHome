@@ -3,27 +3,47 @@ from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from geckohome.bot.i18n import get_lang
+from geckohome.bot.keyboards import cricket_count_keyboard, feeding_keyboard
 from geckohome.config import TELEGRAM_SUPER_ADMINS
 from geckohome.database import (
-    log_feeding, get_feeding_history, get_next_feeding_supplements, log_cricket_purchase,
-    get_feeding_count, get_last_note_date, get_last_cricket_purchase, get_last_feeding_cached,
-    delete_alert_message, get_alert_message, save_alert_message, log_cricket_ran_out,
-    get_cricket_stats,
     append_feeding_note,
+    delete_alert_message,
+    get_alert_message,
+    get_cricket_stats,
+    get_feeding_count,
+    get_feeding_history,
+    get_last_cricket_purchase,
+    get_last_feeding_cached,
+    get_last_note_date,
+    get_next_feeding_supplements,
+    log_cricket_purchase,
+    log_cricket_ran_out,
+    log_feeding,
+    save_alert_message,
 )
-from geckohome.bot.keyboards import feeding_keyboard, cricket_count_keyboard
-from geckohome.bot.i18n import get_lang
 
 log = logging.getLogger(__name__)
 
 
-from geckohome.bot.handlers._helpers import _bump_alerts, _dismiss_alert, _remove_alert_button, _safe_edit
+from geckohome.bot.handlers._helpers import (
+    _bump_alerts,
+    _dismiss_alert,
+    _remove_alert_button,
+    _safe_edit,
+)
 
 
 async def _handle_calendar(query):
     from datetime import timedelta
-    from geckohome.database import get_gecko_birthday, get_cricket_remaining, get_feedings_count_since
+
+    from geckohome.database import (
+        get_cricket_remaining,
+        get_feedings_count_since,
+        get_gecko_birthday,
+    )
     from geckohome.services.scheduler import get_feeding_schedule
+
     now = datetime.now()
 
     last_feeding = get_last_feeding_cached()
@@ -62,7 +82,9 @@ async def _handle_calendar(query):
 
         # Добавки: нужны ли к этому кормлению?
         extras = []
-        feedings_since_vitamins = await get_feedings_count_since(last_vitamins) if last_vitamins else 99
+        feedings_since_vitamins = (
+            await get_feedings_count_since(last_vitamins) if last_vitamins else 99
+        )
         if last_vitamins is None or feedings_since_vitamins >= 1:
             extras.append("💊 витамины")
         if last_hornworm is None or (next_feed.date() - last_hornworm.date()).days >= 14:
@@ -92,10 +114,14 @@ async def _handle_calendar(query):
         lines.append("⚪️ 🦗 Сверчки: *не записаны*")
 
     text = "\n".join(lines)
-    await _safe_edit(query, text, parse_mode="Markdown",
-                     reply_markup=InlineKeyboardMarkup([[
-                         InlineKeyboardButton("◀ Назад", callback_data="feeding_menu")
-                     ]]))
+    await _safe_edit(
+        query,
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("◀ Назад", callback_data="feeding_menu")]]
+        ),
+    )
 
 
 async def _handle_cricket_bought(query, user_id, ctx):
@@ -106,8 +132,12 @@ async def _handle_cricket_bought(query, user_id, ctx):
     else:
         msg = "🦗 Партия сверчков записана! Покорми их сегодня."
     await query.answer(msg, show_alert=True)
-    await _safe_edit(query, "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
-                     parse_mode="Markdown", reply_markup=await feeding_keyboard(lang))
+    await _safe_edit(
+        query,
+        "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
+        parse_mode="Markdown",
+        reply_markup=await feeding_keyboard(lang),
+    )
     await _dismiss_alert(ctx, user_id, "cricket")
     await _bump_alerts(ctx, user_id)
 
@@ -122,9 +152,13 @@ async def _handle_cricket_out(query, user_id, ctx):
         alert_text = "🔴 *Сверчки закончились!*\nКупи новую партию."
     await log_cricket_ran_out()
     await query.answer(msg, show_alert=True)
-    markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket"),
-    ]])
+    markup = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket"),
+            ]
+        ]
+    )
     for uid in TELEGRAM_SUPER_ADMINS:
         old_id = await get_alert_message(uid, "cricket")
         if old_id:
@@ -133,11 +167,12 @@ async def _handle_cricket_out(query, user_id, ctx):
             except Exception:
                 pass
         try:
-            sent = await ctx.bot.send_message(chat_id=uid, text=alert_text, parse_mode="Markdown", reply_markup=markup)
+            sent = await ctx.bot.send_message(
+                chat_id=uid, text=alert_text, parse_mode="Markdown", reply_markup=markup
+            )
             await save_alert_message(uid, "cricket", sent.message_id)
         except Exception:
             pass
-
 
 
 async def _handle_feeding_history(query):
@@ -147,11 +182,13 @@ async def _handle_feeding_history(query):
     else:
         parsed = []
         for entry in history:
-            parsed.append((entry["fed_at"], entry["crickets"], entry["vitamins"], entry["hornworm"]))
+            parsed.append(
+                (entry["fed_at"], entry["crickets"], entry["vitamins"], entry["hornworm"])
+            )
 
-        show_crickets  = any(p[1] for p in parsed)
-        show_vitamins  = any(p[2] for p in parsed)
-        show_hornworm  = any(p[3] for p in parsed)
+        show_crickets = any(p[1] for p in parsed)
+        show_vitamins = any(p[2] for p in parsed)
+        show_hornworm = any(p[3] for p in parsed)
 
         lines = []
         for dt, crickets, has_vitamins, has_hornworm in parsed:
@@ -165,18 +202,26 @@ async def _handle_feeding_history(query):
             lines.append(line)
 
         text = "🍎 *История кормления*\n━━━━━━━━━━━━━━━\n\n" + "\n".join(lines)
-    await _safe_edit(query, text, parse_mode="Markdown",
-                     reply_markup=InlineKeyboardMarkup([
-                         [InlineKeyboardButton("📊 Статистика", callback_data="cricket_stats")],
-                         [InlineKeyboardButton("◀ Назад", callback_data="feeding_menu")],
-                     ]))
+    await _safe_edit(
+        query,
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("📊 Статистика", callback_data="cricket_stats")],
+                [InlineKeyboardButton("◀ Назад", callback_data="feeding_menu")],
+            ]
+        ),
+    )
 
 
 async def _handle_cricket_stats(query):
     stats = await get_cricket_stats()
     total_feedings = await get_feeding_count()
     if stats["count"] == 0:
-        text = "📊 *Статистика сверчков*\n━━━━━━━━━━━━━━━\n\n_Нет данных — количество не записывалось_"
+        text = (
+            "📊 *Статистика сверчков*\n━━━━━━━━━━━━━━━\n\n_Нет данных — количество не записывалось_"
+        )
     else:
         text = (
             f"📊 *Статистика сверчков*\n━━━━━━━━━━━━━━━\n\n"
@@ -185,47 +230,76 @@ async def _handle_cricket_stats(query):
             f"Всего сверчков: *{stats['total']}*\n"
             f"В среднем за кормление: *{stats['avg']}*"
         )
-    await _safe_edit(query, text, parse_mode="Markdown",
-                     reply_markup=InlineKeyboardMarkup([[
-                         InlineKeyboardButton("◀ Назад", callback_data="feeding_history")
-                     ]]))
+    await _safe_edit(
+        query,
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("◀ Назад", callback_data="feeding_history")]]
+        ),
+    )
 
 
 async def _handle_fed_note(query, user_id, note: str, msg_ru: str, msg_en: str):
     await append_feeding_note(note)
     lang = await get_lang(user_id)
     await query.answer(msg_ru if lang == "ru" else msg_en, show_alert=True)
-    await _safe_edit(query, "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
-                     parse_mode="Markdown", reply_markup=await feeding_keyboard(lang))
+    await _safe_edit(
+        query,
+        "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
+        parse_mode="Markdown",
+        reply_markup=await feeding_keyboard(lang),
+    )
 
 
 async def _handle_fed(query, user_id, ctx):
     lang = await get_lang(user_id)
-    title = "🍎 *Питание*\n\nСколько сверчков дал?" if lang == "ru" else "🍎 *Feeding*\n\nHow many crickets?"
-    await _safe_edit(query, title, parse_mode="Markdown",
-                     reply_markup=cricket_count_keyboard(lang, prefix="fed_count_", back="feeding_menu"))
+    title = (
+        "🍎 *Питание*\n\nСколько сверчков дал?"
+        if lang == "ru"
+        else "🍎 *Feeding*\n\nHow many crickets?"
+    )
+    await _safe_edit(
+        query,
+        title,
+        parse_mode="Markdown",
+        reply_markup=cricket_count_keyboard(lang, prefix="fed_count_", back="feeding_menu"),
+    )
 
 
 async def _handle_fed_count(query, user_id, ctx, count: int):
     supplements = await get_next_feeding_supplements()
-    await log_feeding(crickets=count, vitamins="vitamins" in supplements, hornworm="hornworm" in supplements)
+    await log_feeding(
+        crickets=count, vitamins="vitamins" in supplements, hornworm="hornworm" in supplements
+    )
     lang = await get_lang(user_id)
     confirm = f"✅ Записано! Дал {count} сверчков." if lang == "ru" else f"✅ Fed {count} crickets!"
     await query.answer(confirm, show_alert=True)
-    await _safe_edit(query, "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
-                     parse_mode="Markdown", reply_markup=await feeding_keyboard(lang))
+    await _safe_edit(
+        query,
+        "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
+        parse_mode="Markdown",
+        reply_markup=await feeding_keyboard(lang),
+    )
     await _dismiss_alert(ctx, user_id, "feeding")
     await _bump_alerts(ctx, user_id)
 
 
-
-
 async def _handle_alert_fed(query, user_id):
     lang = await get_lang(user_id)
-    title = "🔴 *Пора кормить!*\n\nСколько сверчков?" if lang == "ru" else "🔴 *Time to feed!*\n\nHow many crickets?"
+    title = (
+        "🔴 *Пора кормить!*\n\nСколько сверчков?"
+        if lang == "ru"
+        else "🔴 *Time to feed!*\n\nHow many crickets?"
+    )
     try:
-        await query.edit_message_text(title, parse_mode="Markdown",
-                                      reply_markup=cricket_count_keyboard(lang, prefix="alert_fed_count_", back="alert_fed_cancel"))
+        await query.edit_message_text(
+            title,
+            parse_mode="Markdown",
+            reply_markup=cricket_count_keyboard(
+                lang, prefix="alert_fed_count_", back="alert_fed_cancel"
+            ),
+        )
     except Exception:
         pass
 
@@ -233,10 +307,15 @@ async def _handle_alert_fed(query, user_id):
 async def _handle_alert_fed_count(query, user_id, count: int):
     supplements = await get_next_feeding_supplements()  # до логирования
     await log_feeding(crickets=count)
-    confirm = f"✅ Записано! Дал {count} сверчков." if await get_lang(user_id) == "ru" else f"✅ Fed {count} crickets!"
+    confirm = (
+        f"✅ Записано! Дал {count} сверчков."
+        if await get_lang(user_id) == "ru"
+        else f"✅ Fed {count} crickets!"
+    )
     await query.answer(confirm, show_alert=True)
 
     from geckohome.database import get_cricket_remaining
+
     crickets_remaining = await get_cricket_remaining()
 
     event_row = []
@@ -254,7 +333,8 @@ async def _handle_alert_fed_count(query, user_id, count: int):
     if rows:
         try:
             await query.edit_message_text(
-                "🍎 *Покормил!*\n\nЕщё что отметить?", parse_mode="Markdown",
+                "🍎 *Покормил!*\n\nЕщё что отметить?",
+                parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup(rows),
             )
             await save_alert_message(user_id, "feeding", query.message.message_id)
@@ -275,6 +355,7 @@ async def _handle_alert_fed_count(query, user_id, count: int):
 async def _handle_alert_fed_cancel(query):
     """Восстанавливаем оригинальные кнопки алерта (пользователь передумал)."""
     from geckohome.database import get_cricket_remaining, get_last_feeding_db
+
     supplements = await get_next_feeding_supplements()
     crickets_remaining = await get_cricket_remaining()
     last = await get_last_feeding_db()
@@ -299,16 +380,22 @@ async def _handle_alert_fed_cancel(query):
         rows.append([InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket")])
 
     try:
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+        await query.edit_message_text(
+            text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows)
+        )
     except Exception:
         pass
 
 
 async def _handle_alert_cricket(query, user_id):
-    markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("20 шт.", callback_data="alert_cricket_count_20"),
-        InlineKeyboardButton("30 шт.", callback_data="alert_cricket_count_30"),
-    ]])
+    markup = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("20 шт.", callback_data="alert_cricket_count_20"),
+                InlineKeyboardButton("30 шт.", callback_data="alert_cricket_count_30"),
+            ]
+        ]
+    )
     try:
         await query.edit_message_reply_markup(reply_markup=markup)
     except Exception:
@@ -340,5 +427,3 @@ async def _handle_alert_vitamins(query, user_id):
     await append_feeding_note("vitamins")
     await query.answer("💊 Витамины записаны!")
     await _remove_alert_button(query, user_id, "alert_vitamins", "feeding")
-
-

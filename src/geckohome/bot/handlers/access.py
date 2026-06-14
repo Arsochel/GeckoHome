@@ -2,12 +2,16 @@ import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from geckohome.bot.keyboards import admin_keyboard
 from geckohome.config import TELEGRAM_SUPER_ADMINS
 from geckohome.database import (
-    add_access_request, get_access_requests, remove_access_request, has_pending_request,
-    add_allowed_user, remove_allowed_user,
+    add_access_request,
+    add_allowed_user,
+    get_access_requests,
+    has_pending_request,
+    remove_access_request,
+    remove_allowed_user,
 )
-from geckohome.bot.keyboards import admin_keyboard
 
 log = logging.getLogger(__name__)
 
@@ -29,10 +33,14 @@ async def _handle_request_access(query, user):
                 admin_id,
                 f"🔔 *Запрос доступа*\n{name} (`{user.id}`)",
                 parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("✅", callback_data=f"approve_{user.id}"),
-                    InlineKeyboardButton("❌", callback_data=f"deny_{user.id}"),
-                ]]),
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton("✅", callback_data=f"approve_{user.id}"),
+                            InlineKeyboardButton("❌", callback_data=f"deny_{user.id}"),
+                        ]
+                    ]
+                ),
             )
         except Exception:
             pass
@@ -43,9 +51,15 @@ async def _handle_approve(query, ctx, data):
     req_id = int(data.replace("approve_", ""))
     reqs = await get_access_requests()
     req = next((r for r in reqs if r["user_id"] == req_id), None)
-    await add_allowed_user(req_id, req["username"] if req else None, req["first_name"] if req else None)
+    await add_allowed_user(
+        req_id, req["username"] if req else None, req["first_name"] if req else None
+    )
     await remove_access_request(req_id)
-    name = f"@{req['username']}" if req and req.get("username") else (req["first_name"] if req and req.get("first_name") else str(req_id))
+    name = (
+        f"@{req['username']}"
+        if req and req.get("username")
+        else (req["first_name"] if req and req.get("first_name") else str(req_id))
+    )
     await _safe_edit(query, f"✅ {name} одобрен.")
     try:
         await ctx.bot.send_message(req_id, "🎉 Доступ открыт! Напишите /start")
@@ -64,21 +78,21 @@ async def _handle_deny(query, ctx, data):
         pass
 
 
-
-
 async def _handle_admin(query):
     kb = await admin_keyboard()
-    await _safe_edit(query, "⚙️ *Управление*\n━━━━━━━━━━━━━━━",
-                     parse_mode="Markdown", reply_markup=kb)
-
-
+    await _safe_edit(
+        query, "⚙️ *Управление*\n━━━━━━━━━━━━━━━", parse_mode="Markdown", reply_markup=kb
+    )
 
 
 async def _handle_add_user_prompt(query, ctx):
     ctx.user_data["waiting_user_id"] = True
-    await _safe_edit(query,
+    await _safe_edit(
+        query,
         "Отправьте Telegram ID пользователя:",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀ Отмена", callback_data="admin")]]),
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("◀ Отмена", callback_data="admin")]]
+        ),
     )
 
 
@@ -86,9 +100,11 @@ async def _handle_remove_user(query, rm_id):
     await remove_allowed_user(rm_id)
     kb = await admin_keyboard()
     try:
-        await _safe_edit(query, "⚙️ *Управление*\n━━━━━━━━━━━━━━━\n\nПользователь удалён.",
-                         parse_mode="Markdown", reply_markup=kb)
+        await _safe_edit(
+            query,
+            "⚙️ *Управление*\n━━━━━━━━━━━━━━━\n\nПользователь удалён.",
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
     except Exception:
         pass
-
-

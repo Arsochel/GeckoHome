@@ -3,16 +3,20 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timedelta
 
 import cv2
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from geckohome import paths
-from geckohome.database import validate_debug_token, get_motion_events_24h_count, get_recent_motion_events
-from geckohome.services import camera, motion as motion_module, debug_log
+from geckohome.database import (
+    get_motion_events_24h_count,
+    get_recent_motion_events,
+    validate_debug_token,
+)
+from geckohome.services import camera, debug_log
+from geckohome.services import motion as motion_module
 from geckohome.services.motion import monitor as motion_monitor
 from geckohome.services.yolo import get_model as get_yolo_model
 
@@ -93,10 +97,17 @@ async def debug_stream_yolo(request: Request):
                         last_boxes = boxes
                     except Exception as e:
                         log.warning("YOLO debug inference failed: %s", e)
-            for (x1, y1, x2, y2, conf) in last_boxes:
+            for x1, y1, x2, y2, conf in last_boxes:
                 cv2.rectangle(rotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(rotated, f"{conf:.2f}", (x1, max(20, y1 - 6)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                cv2.putText(
+                    rotated,
+                    f"{conf:.2f}",
+                    (x1, max(20, y1 - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 255, 0),
+                    2,
+                )
             ok, buf = cv2.imencode(".jpg", rotated, [cv2.IMWRITE_JPEG_QUALITY, 70])
             if not ok:
                 await asyncio.sleep(0.1)
@@ -126,7 +137,7 @@ async def debug_logs_stream(request: Request, service: str = "all"):
                     return
                 try:
                     record = await asyncio.wait_for(q.get(), timeout=15.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": keepalive\n\n"
                     continue
                 if service != "all":
@@ -163,6 +174,7 @@ async def debug_metrics(request: Request):
     ram_mb = 0.0
     try:
         import psutil
+
         proc = psutil.Process()
         cpu_percent = proc.cpu_percent(interval=None)
         ram_mb = proc.memory_info().rss / (1024 * 1024)
@@ -176,13 +188,16 @@ async def debug_metrics(request: Request):
     events_24h = await get_motion_events_24h_count()
 
     from geckohome.services.scheduler import scheduler as aps
+
     jobs = []
     for j in aps.get_jobs():
-        jobs.append({
-            "id": j.id,
-            "next_run": j.next_run_time.isoformat() if j.next_run_time else None,
-            "paused": j.next_run_time is None,
-        })
+        jobs.append(
+            {
+                "id": j.id,
+                "next_run": j.next_run_time.isoformat() if j.next_run_time else None,
+                "paused": j.next_run_time is None,
+            }
+        )
 
     hls_proc = camera._hls_proc
     mtx_proc = camera._mediamtx_proc
@@ -230,10 +245,14 @@ async def debug_motion_events(request: Request, limit: int = 20):
 @router.get("/api/health")
 async def health():
     hls_proc = camera._hls_proc
-    return JSONResponse({
-        "ok": True,
-        "camera": "running" if (hls_proc is not None and hls_proc.poll() is None) else ("stopped" if camera.is_configured() else "na"),
-        "motion": "running" if motion_monitor.is_running() else "stopped",
-        "scheduler": "running",
-        "uptime_sec": time.monotonic() - _START_TS,
-    })
+    return JSONResponse(
+        {
+            "ok": True,
+            "camera": "running"
+            if (hls_proc is not None and hls_proc.poll() is None)
+            else ("stopped" if camera.is_configured() else "na"),
+            "motion": "running" if motion_monitor.is_running() else "stopped",
+            "scheduler": "running",
+            "uptime_sec": time.monotonic() - _START_TS,
+        }
+    )

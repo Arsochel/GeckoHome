@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 import re
@@ -12,7 +11,7 @@ log = logging.getLogger(__name__)
 
 
 def _run():
-    port  = os.getenv("SERVER_PORT", "8000")
+    port = os.getenv("SERVER_PORT", "8000")
     delay = 60
 
     while True:
@@ -23,7 +22,8 @@ def _run():
                 pass
             proc = subprocess.Popen(
                 ["cloudflared", "tunnel", "--url", f"http://localhost:{port}"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
             )
 
             with open(TUNNEL_PID_FILE, "w") as f:

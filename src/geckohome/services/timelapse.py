@@ -14,7 +14,7 @@ import cv2
 import httpx
 from PIL import Image, ImageOps
 
-from geckohome.config import TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS, TIMELAPSE_OWNER_ID
+from geckohome.config import TELEGRAM_BOT_TOKEN, TIMELAPSE_OWNER_ID
 from geckohome.database import get_blocked_user_ids, set_user_blocked
 from geckohome.paths import TIMELAPSE_FRAMES_DIR, TIMELAPSE_VIDEOS_DIR
 
@@ -35,7 +35,9 @@ def _strip_exif(path: str):
 
 
 def capture_timelapse_frame():
-    from geckohome.services.motion import monitor as motion_monitor, get_last_motion_time
+    from geckohome.services.motion import get_last_motion_time
+    from geckohome.services.motion import monitor as motion_monitor
+
     last_motion = get_last_motion_time()
     if last_motion is None:
         return
@@ -58,7 +60,7 @@ def capture_timelapse_frame():
 
 
 TIMELAPSE_DIFF_THRESHOLD = 5.5  # % значимых пикселей между кадрами
-TIMELAPSE_DIFF_PIXEL_MIN = 12   # минимальный diff пикселя чтобы считаться значимым
+TIMELAPSE_DIFF_PIXEL_MIN = 12  # минимальный diff пикселя чтобы считаться значимым
 YOLO_CONF = 0.8
 
 
@@ -66,6 +68,7 @@ def _detect_gecko(bgr):
     """Возвращает список bbox [(x1,y1,x2,y2,conf)] или []."""
     try:
         from geckohome.services.yolo import get_model
+
         model = get_model()
         if model is None:
             return []
@@ -83,15 +86,15 @@ def _detect_gecko(bgr):
 
 def _boxes_to_mask(shape, boxes):
     import numpy as np
+
     mask = np.zeros(shape[:2], dtype=np.uint8)
-    for (x1, y1, x2, y2, _) in boxes:
+    for x1, y1, x2, y2, _ in boxes:
         cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
     return mask
 
 
 def _compute_diff(gray1, gray2, mask=None):
     """Возвращает % значимых пикселей (по маске если есть)."""
-    import numpy as np
     b1 = cv2.GaussianBlur(gray1, (5, 5), 0)
     b2 = cv2.GaussianBlur(gray2, (5, 5), 0)
     diff = cv2.absdiff(b1, b2)
@@ -137,7 +140,7 @@ def _select_changing_frames(frame_pairs: list[tuple[str, str]]) -> list[tuple[st
     result: list[tuple[str, str]] = []
     prev_gray = None
     prev_bgr = None
-    for (d, name) in frame_pairs:
+    for d, name in frame_pairs:
         path = os.path.join(d, name)
         bgr = cv2.imread(path)
         if bgr is None:
@@ -163,7 +166,7 @@ def _prune_frames(frame_pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
     result = _select_changing_frames(frame_pairs)
     keep_set = set(result)
     deleted = 0
-    for (d, name) in frame_pairs:
+    for d, name in frame_pairs:
         if (d, name) not in keep_set:
             try:
                 os.unlink(os.path.join(d, name))
@@ -212,16 +215,30 @@ def _compile_timelapse(frame_pairs: list[tuple[str, str]], fps: int, output_path
                 f.write(f"file '{pathlib.Path(tmp_dir, name).as_posix()}'\n")
         result = subprocess.run(
             [
-                "ffmpeg", "-y",
-                "-r", str(fps),
-                "-f", "concat", "-safe", "0",
-                "-i", list_path,
-                "-vf", "scale=720:-2",
-                "-pix_fmt", "yuv420p",
-                "-c:v", "libx264", "-preset", "fast", "-crf", "28",
+                "ffmpeg",
+                "-y",
+                "-r",
+                str(fps),
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                list_path,
+                "-vf",
+                "scale=720:-2",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "28",
                 output_path,
             ],
-            capture_output=True, timeout=300,
+            capture_output=True,
+            timeout=300,
         )
         if result.returncode != 0:
             log.error("ffmpeg error:\n%s", result.stderr.decode(errors="replace")[-500:])
@@ -235,7 +252,9 @@ def _compile_timelapse(frame_pairs: list[tuple[str, str]], fps: int, output_path
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-async def _send_video(path: str, caption: str, recipients: set[int], reply_markup: dict | None = None):
+async def _send_video(
+    path: str, caption: str, recipients: set[int], reply_markup: dict | None = None
+):
     """Отправляет видео в Telegram."""
     if not TELEGRAM_BOT_TOKEN or not recipients:
         return
@@ -289,7 +308,13 @@ async def _generate_and_send(from_dt: datetime, to_dt: datetime, label: str):
         log.warning("only %d frames for %s, skipping", len(frame_pairs), label)
         return
 
-    log.info("generating %s from %d frames (%s — %s)", label, len(frame_pairs), from_dt.strftime("%Y-%m-%d %H:%M"), to_dt.strftime("%Y-%m-%d %H:%M"))
+    log.info(
+        "generating %s from %d frames (%s — %s)",
+        label,
+        len(frame_pairs),
+        from_dt.strftime("%Y-%m-%d %H:%M"),
+        to_dt.strftime("%Y-%m-%d %H:%M"),
+    )
 
     os.makedirs(TIMELAPSE_VIDEOS_DIR, exist_ok=True)
     _cleanup_old_videos()
@@ -302,9 +327,14 @@ async def _generate_and_send(from_dt: datetime, to_dt: datetime, label: str):
     if ok:
         caption = f"🎬 {label} {day_label}"
         publish_markup = {
-            "inline_keyboard": [[
-                {"text": "📢 Опубликовать всем", "callback_data": f"timelapse_publish_{day_label}"}
-            ]]
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "📢 Опубликовать всем",
+                        "callback_data": f"timelapse_publish_{day_label}",
+                    }
+                ]
+            ]
         }
         await _send_video(out_path, caption, {TIMELAPSE_OWNER_ID}, reply_markup=publish_markup)
         log.info("sent to owner %s", TIMELAPSE_OWNER_ID)
@@ -314,7 +344,9 @@ async def _generate_and_send(from_dt: datetime, to_dt: datetime, label: str):
 
 async def generate_and_send_timelapse_for(day: str, label: str):
     """Генерирует таймлапс за сутки начиная с 12:00 указанного дня."""
-    from_dt = datetime.strptime(day, "%Y-%m-%d").replace(hour=TIMELAPSE_DAY_START_HOUR, minute=0, second=0)
+    from_dt = datetime.strptime(day, "%Y-%m-%d").replace(
+        hour=TIMELAPSE_DAY_START_HOUR, minute=0, second=0
+    )
     to_dt = from_dt + timedelta(days=1)
     await _generate_and_send(from_dt, to_dt, label)
 

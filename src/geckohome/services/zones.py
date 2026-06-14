@@ -1,4 +1,5 @@
 """Зональная детекция геккона — общая логика для motion monitor и gecko_detect."""
+
 import cv2
 import numpy as np
 
@@ -6,20 +7,63 @@ import numpy as np
 ZONE_W, ZONE_H = 450, 800
 
 PRESET_ZONES = [
-    {"name": "skull",   "pts": [(86, 219), (72, 238), (79, 266), (80, 311), (90, 326), (208, 400), (263, 375), (271, 353), (264, 308), (241, 281), (225, 243), (184, 208), (127, 210)]},
-    {"name": "water",   "pts": [(387, 484), (349, 519), (347, 557), (353, 588), (437, 637), (449, 618), (449, 491), (435, 481), (405, 480)]},
-    {"name": "sauna",   "pts": [(12, 441), (47, 400), (118, 408), (212, 474), (250, 588), (203, 653), (57, 660), (8, 608), (3, 485)]},
+    {
+        "name": "skull",
+        "pts": [
+            (86, 219),
+            (72, 238),
+            (79, 266),
+            (80, 311),
+            (90, 326),
+            (208, 400),
+            (263, 375),
+            (271, 353),
+            (264, 308),
+            (241, 281),
+            (225, 243),
+            (184, 208),
+            (127, 210),
+        ],
+    },
+    {
+        "name": "water",
+        "pts": [
+            (387, 484),
+            (349, 519),
+            (347, 557),
+            (353, 588),
+            (437, 637),
+            (449, 618),
+            (449, 491),
+            (435, 481),
+            (405, 480),
+        ],
+    },
+    {
+        "name": "sauna",
+        "pts": [
+            (12, 441),
+            (47, 400),
+            (118, 408),
+            (212, 474),
+            (250, 588),
+            (203, 653),
+            (57, 660),
+            (8, 608),
+            (3, 485),
+        ],
+    },
 ]
 
 PRESET_ZONES_NP = [np.array(z["pts"], dtype=np.int32) for z in PRESET_ZONES]
 
 _skull_pts = next(z["pts"] for z in PRESET_ZONES if z["name"] == "skull")
-SKULL_CX   = int(np.mean([p[0] for p in _skull_pts]))
-SKULL_CY   = int(np.mean([p[1] for p in _skull_pts]))
+SKULL_CX = int(np.mean([p[0] for p in _skull_pts]))
+SKULL_CY = int(np.mean([p[1] for p in _skull_pts]))
 
 _water_pts = next(z["pts"] for z in PRESET_ZONES if z["name"] == "water")
-WATER_CX   = int(np.mean([p[0] for p in _water_pts]))
-WATER_CY   = int(np.mean([p[1] for p in _water_pts]))
+WATER_CX = int(np.mean([p[0] for p in _water_pts]))
+WATER_CY = int(np.mean([p[1] for p in _water_pts]))
 
 
 def _dist2(ax, ay, bx, by) -> float:

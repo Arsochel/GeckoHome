@@ -12,4 +12,4 @@ from geckohome.bot.handlers.dispatch import (
     message_handler,
 )
 
-__all__ = ["cmd_start", "cmd_status", "button_handler", "message_handler"]
+__all__ = ["button_handler", "cmd_start", "cmd_status", "message_handler"]

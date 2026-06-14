@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import os
 import subprocess
@@ -16,17 +15,32 @@ import cv2
 import httpx
 
 from geckohome.config import (
-    CAMERA_RTSP_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS, TELEGRAM_ADMINS, YOLO_MODEL_PATH,
-    MOTION_THRESHOLD, MOTION_MIN_AREA, MOTION_TIMEOUT, MOTION_DEBUG,
+    CAMERA_RTSP_URL,
+    MOTION_DEBUG,
+    MOTION_MIN_AREA,
+    MOTION_THRESHOLD,
+    MOTION_TIMEOUT,
+    TELEGRAM_ADMINS,
+    TELEGRAM_BOT_TOKEN,
+    TELEGRAM_SUPER_ADMINS,
+    YOLO_MODEL_PATH,
 )
-from geckohome.database import save_photo, add_motion_event, set_gecko_state, log_gecko_zone, update_motion_photo, DB_PATH, get_blocked_user_ids, set_user_blocked
+from geckohome.database import (
+    get_blocked_user_ids,
+    log_gecko_zone,
+    save_photo,
+    set_gecko_state,
+    set_user_blocked,
+)
 from geckohome.services.yolo import get_model as _get_yolo
-from geckohome.services.zones import detect_zone, ZONE_W, ZONE_H
+from geckohome.services.zones import ZONE_H, ZONE_W, detect_zone
 
 _last_motion_time: datetime | None = None
 _motion_lock = threading.Lock()
 
-yolo_debug_conf: float = 0.8  # пороговый conf для дебаг-стрима, меняется через POST /debug/yolo-conf
+yolo_debug_conf: float = (
+    0.8  # пороговый conf для дебаг-стрима, меняется через POST /debug/yolo-conf
+)
 
 
 def get_last_motion_time() -> datetime | None:
@@ -35,9 +49,9 @@ def get_last_motion_time() -> datetime | None:
 
 # ── Настройки (MOTION_THRESHOLD/MIN_AREA/TIMEOUT/DEBUG — из config.py/.env) ──
 _DEBUG_FRAME_PATH = os.path.join(tempfile.gettempdir(), "gecko_motion_debug.jpg")
-SNAPSHOT_INTERVAL = 10     # секунд между снапшотами во время движения
-MIN_FRAMES        = 1      # минимум кадров чтобы отправить видео
-YOLO_INTERVAL     = 5      # секунд между запусками YOLO детекции зоны
+SNAPSHOT_INTERVAL = 10  # секунд между снапшотами во время движения
+MIN_FRAMES = 1  # минимум кадров чтобы отправить видео
+YOLO_INTERVAL = 5  # секунд между запусками YOLO детекции зоны
 # ───────────────────────────────────────────────────────────────────────────
 
 
@@ -71,13 +85,19 @@ async def _send_telegram_video(video_path: str, caption: str):
                     await set_user_blocked(admin_id, True)
                     log.warning("user %s blocked the bot, skipping", admin_id)
                 else:
-                    log.error("Telegram send failed (attempt %d/3): %s", attempt + 1, data.get("description"))
+                    log.error(
+                        "Telegram send failed (attempt %d/3): %s",
+                        attempt + 1,
+                        data.get("description"),
+                    )
                     if attempt < 2:
                         await asyncio.sleep(15 * (attempt + 1))
                     continue
                 break
             except Exception as e:
-                log.error("Telegram send error (attempt %d/3): %s: %s", attempt + 1, type(e).__name__, e)
+                log.error(
+                    "Telegram send error (attempt %d/3): %s: %s", attempt + 1, type(e).__name__, e
+                )
                 if attempt < 2:
                     await asyncio.sleep(15 * (attempt + 1))
 
@@ -96,15 +116,34 @@ def _compile_video_sync(snapshot_paths: list[str]) -> str | None:
                 f.write(f"file '{escaped}'\n")
                 f.write("duration 1\n")
 
-        result = subprocess.run([
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0", "-i", list_path,
-            "-vf", "transpose=1,scale=1280:-2",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-            "-pix_fmt", "yuv420p", "-an",
-            "-movflags", "+faststart",
-            out_path,
-        ], capture_output=True, timeout=120)
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                list_path,
+                "-vf",
+                "transpose=1,scale=1280:-2",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "23",
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+                "-movflags",
+                "+faststart",
+                out_path,
+            ],
+            capture_output=True,
+            timeout=120,
+        )
     finally:
         try:
             os.unlink(list_path)
@@ -180,28 +219,30 @@ class MotionMonitor:
 
         # отдельный поток захвата — всегда держит свежий кадр
         latest_frame: list = [None]
+
         def _capture_loop():
             while not self._stop_event.is_set():
                 ret, f = cap.read()
                 if ret:
                     latest_frame[0] = f
                     self._latest_frame = f
+
         cap_thread = threading.Thread(target=_capture_loop, daemon=True)
         cap_thread.start()
 
         bg_sub = cv2.createBackgroundSubtractorMOG2(
             history=200, varThreshold=MOTION_THRESHOLD, detectShadows=False
         )
-        motion_active    = False
-        last_motion_t    = 0.0
-        last_snap_t      = 0.0
-        last_yolo_t      = 0.0
+        motion_active = False
+        last_motion_t = 0.0
+        last_snap_t = 0.0
+        last_yolo_t = 0.0
         snapshots: list[str] = []
-        warmup_frames    = 0
-        last_frame_sum   = None
-        frozen_count     = 0
-        FROZEN_LIMIT     = 150   # ~45 сек при 0.3s интервале
-        last_frame_t     = time.monotonic()
+        warmup_frames = 0
+        last_frame_sum = None
+        frozen_count = 0
+        FROZEN_LIMIT = 150  # ~45 сек при 0.3s интервале
+        last_frame_t = time.monotonic()
         NO_FRAME_TIMEOUT = 30.0  # сек без кадров → реконнект
 
         try:
@@ -232,15 +273,13 @@ class MotionMonitor:
 
                 # маскируем timestamp камеры (нижний левый угол)
                 h, w = fg_mask.shape
-                fg_mask[int(h * 0.88):, :int(w * 0.35)] = 0
+                fg_mask[int(h * 0.88) :, : int(w * 0.35)] = 0
 
                 # морфология: убираем шум
                 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
                 fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel)
 
-                contours, _ = cv2.findContours(
-                    fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-                )
+                contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 big_contours = [c for c in contours if cv2.contourArea(c) > MOTION_MIN_AREA]
 
                 # MOG2 нужно ~30 кадров чтобы выучить фон — в этот период не детектим
@@ -252,8 +291,20 @@ class MotionMonitor:
                 debug = frame.copy()
                 cv2.drawContours(debug, big_contours, -1, (0, 255, 0), 2)
                 max_area = int(max((cv2.contourArea(c) for c in contours), default=0))
-                label = f"MOTION area={int(max((cv2.contourArea(c) for c in big_contours), default=0))}" if motion else f"quiet max={max_area} {'(warmup)' if warmup_frames <= 30 else ''}"
-                cv2.putText(debug, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0) if motion else (100, 100, 100), 2)
+                label = (
+                    f"MOTION area={int(max((cv2.contourArea(c) for c in big_contours), default=0))}"
+                    if motion
+                    else f"quiet max={max_area} {'(warmup)' if warmup_frames <= 30 else ''}"
+                )
+                cv2.putText(
+                    debug,
+                    label,
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 255, 0) if motion else (100, 100, 100),
+                    2,
+                )
                 self._debug_frame = debug
                 if MOTION_DEBUG:
                     cv2.imwrite(_DEBUG_FRAME_PATH, debug)
@@ -268,12 +319,8 @@ class MotionMonitor:
                         with _motion_lock:
                             _last_motion_time = datetime.now()
                         log.info("motion started")
-                        asyncio.run_coroutine_threadsafe(
-                            set_gecko_state("roaming"), self._loop
-                        )
-                        asyncio.run_coroutine_threadsafe(
-                            self._record_and_send(), self._loop
-                        )
+                        asyncio.run_coroutine_threadsafe(set_gecko_state("roaming"), self._loop)
+                        asyncio.run_coroutine_threadsafe(self._record_and_send(), self._loop)
                     else:
                         with _motion_lock:
                             _last_motion_time = datetime.now()
@@ -293,9 +340,7 @@ class MotionMonitor:
                     log.info("motion ended — %d frames", len(captured))
 
                     if len(captured) >= MIN_FRAMES:
-                        asyncio.run_coroutine_threadsafe(
-                            self._process(captured), self._loop
-                        )
+                        asyncio.run_coroutine_threadsafe(self._process(captured), self._loop)
                     else:
                         for p in captured:
                             try:
@@ -334,6 +379,7 @@ class MotionMonitor:
         """Записывает 30-секундный клип при срабатывании и отправляет суперадмину."""
         try:
             from geckohome.services.camera import clip as camera_clip
+
             log.info("recording 30s clip...")
             video_path = await camera_clip(30)
             if video_path:
@@ -357,7 +403,6 @@ class MotionMonitor:
             with open(mid_path, "rb") as f:
                 mid_bytes = f.read()
             await save_photo(mid_bytes, source="motion", caption=f"{len(snapshot_paths)} frames")
-
 
         except Exception as e:
             log.error("process error: %s", e)

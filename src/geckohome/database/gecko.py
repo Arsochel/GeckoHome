@@ -4,8 +4,8 @@ from datetime import datetime
 
 from geckohome.database._core import _db
 
-
 # ── Gecko state ──
+
 
 async def set_gecko_state(state: str):
     now = datetime.now()
@@ -35,6 +35,7 @@ async def get_gecko_state() -> tuple[str | None, datetime | None]:
 
 # ── Gecko zone (single-row, latest only) ──
 
+
 async def log_gecko_zone(zone: str, confidence: float | None = None):
     async with _db(write=True) as db:
         await db.execute(
@@ -51,5 +52,3 @@ async def get_gecko_zone() -> tuple[str | None, datetime | None]:
             if not row:
                 return None, None
             return row["zone"], datetime.fromisoformat(row["updated_at"])
-
-

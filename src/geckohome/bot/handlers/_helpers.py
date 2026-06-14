@@ -3,7 +3,11 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from geckohome.database import (
-    get_next_feeding_supplements, delete_alert_message, get_alert_message, save_alert_message, set_user_blocked,
+    delete_alert_message,
+    get_alert_message,
+    get_next_feeding_supplements,
+    save_alert_message,
+    set_user_blocked,
 )
 
 log = logging.getLogger(__name__)
@@ -12,6 +16,7 @@ log = logging.getLogger(__name__)
 async def _bump_alerts(ctx, user_id: int):
     """Пересылает активные алерты вниз (после главного сообщения)."""
     from geckohome.database import get_cricket_remaining
+
     crickets_remaining = await get_cricket_remaining()
     supplements = await get_next_feeding_supplements()
 
@@ -24,13 +29,18 @@ async def _bump_alerts(ctx, user_id: int):
     if event_row:
         feeding_rows.append(event_row)
     if crickets_remaining == 0:
-        feeding_rows.append([InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket")])
+        feeding_rows.append(
+            [InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket")]
+        )
 
     alert_defs = {
         "feeding": ("🔴 *Пора кормить!*", feeding_rows),
-        "cricket": ("🔴 *Сверчки закончились!*\nКупи новую партию.", [
-            [InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket")],
-        ]),
+        "cricket": (
+            "🔴 *Сверчки закончились!*\nКупи новую партию.",
+            [
+                [InlineKeyboardButton("🦗 Купил сверчков", callback_data="alert_cricket")],
+            ],
+        ),
     }
     for alert_type, (text, rows) in alert_defs.items():
         msg_id = await get_alert_message(user_id, alert_type)
@@ -42,7 +52,9 @@ async def _bump_alerts(ctx, user_id: int):
             pass
         try:
             sent = await ctx.bot.send_message(
-                chat_id=user_id, text=text, parse_mode="Markdown",
+                chat_id=user_id,
+                text=text,
+                parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup(rows),
             )
             await save_alert_message(user_id, alert_type, sent.message_id)
@@ -107,4 +119,3 @@ async def _remove_alert_button(query, user_id, remove_data: str, alert_type: str
             await query.message.delete()
         except Exception:
             pass
-

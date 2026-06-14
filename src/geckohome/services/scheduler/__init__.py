@@ -15,12 +15,12 @@ from geckohome.services.scheduler.jobs import load_schedules, shutdown, start
 from geckohome.services.scheduler.lamps import lamp_schedule
 
 __all__ = [
-    "scheduler",
+    "check_cricket_alert",
+    "check_feeding_alert",
+    "get_feeding_schedule",
     "lamp_schedule",
     "load_schedules",
-    "start",
+    "scheduler",
     "shutdown",
-    "check_feeding_alert",
-    "check_cricket_alert",
-    "get_feeding_schedule",
+    "start",
 ]

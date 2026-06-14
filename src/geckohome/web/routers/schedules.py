@@ -1,13 +1,14 @@
+import logging
 import uuid
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from geckohome.services.scheduler import scheduler, lamp_schedule
-from geckohome.database import save_schedule, delete_schedule as db_delete_schedule, set_schedule_paused, log_lamp_event
+from geckohome.database import delete_schedule as db_delete_schedule
+from geckohome.database import save_schedule, set_schedule_paused
+from geckohome.services.scheduler import lamp_schedule, scheduler
 from geckohome.web.routers.auth import get_current_user
 
-import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/schedules")
@@ -32,10 +33,14 @@ async def create_schedule(data: ScheduleCreate, _user: str = Depends(get_current
     if not (0.5 <= data.duration_h <= MAX_DURATION_H):
         raise HTTPException(status_code=400, detail=f"Duration must be 0.5–{MAX_DURATION_H}h")
     job_id = f"{data.lamp_type}_lamp_{uuid.uuid4().hex[:8]}"
-    logger.info(f"[Web] schedule created: {job_id} {data.lamp_type} {data.hour}:{data.minute} {data.duration_h}h")
+    logger.info(
+        f"[Web] schedule created: {job_id} {data.lamp_type} {data.hour}:{data.minute} {data.duration_h}h"
+    )
     scheduler.add_job(
-        lamp_schedule, "cron",
-        hour=data.hour, minute=data.minute,
+        lamp_schedule,
+        "cron",
+        hour=data.hour,
+        minute=data.minute,
         kwargs={"lamp_type": data.lamp_type, "duration_h": data.duration_h},
         id=job_id,
     )
