@@ -15,44 +15,35 @@
 
 ## Structure
 
+Код — устанавливаемый пакет `src/geckohome/`. Точки входа: `geckohome-web`, `geckohome-bot`.
+
 ```
 GeckoHome/
-├── main.py               # FastAPI, WebSocket, Cloudflare tunnel
-├── bot.py                # Telegram bot entry point
-├── config.py             # Config from .env
-├── database.py           # DB schema and CRUD
-├── logging_config.py     # Centralized logging setup
-├── services/
-│   ├── tuya.py           # tinytuya LAN + Tuya Cloud API + UDP listener
-│   ├── camera.py         # RTSP snapshot/clip/HLS/WebRTC
-│   ├── scheduler.py      # APScheduler: лампы, сенсоры, алерты, бэкап
-│   ├── motion.py         # OpenCV motion detection + YOLO зоны
-│   ├── zones.py          # Зоны террариума (skull/water/sauna)
-│   ├── timelapse.py      # Захват кадров, прунинг, сборка MP4
-│   ├── highlights.py     # Состояние геккона (roaming/resting/sleeping)
-│   ├── tunnel.py         # Cloudflare Quick Tunnel
-│   ├── yolo.py           # YOLO inference (зоны геккона)
-│   └── debug_log.py      # Debug log streaming
-├── routers/
-│   ├── auth.py           # Login/logout, CSRF
-│   ├── admin.py          # Веб-панель
-│   ├── devices.py        # Lamp/sensor/camera API + sensor history
-│   ├── schedules.py      # Schedule CRUD
-│   └── debug.py          # Debug panel (token-auth)
-├── bot/
-│   ├── access.py         # Контроль доступа
-│   ├── formatters.py     # Форматирование статуса (RU/EN)
-│   ├── keyboards.py      # Inline keyboards
-│   ├── i18n.py           # Язык пользователя
-│   └── handlers.py       # Обработчики команд и кнопок
-├── templates/
-│   ├── admin.html        # Веб-панель (лампы, камера, расписания, графики)
-│   ├── login.html
-│   ├── stream.html       # Telegram WebApp стрим
-│   └── debug.html        # Debug panel UI
-├── static/               # CSS, JS
-├── gecko_detect.py       # Standalone: YOLO live + калибровка зон
-└── .env                  # Секреты (не коммитить)
+├── pyproject.toml          # пакет, зависимости (пиннинг), ruff/mypy/pytest config
+├── src/geckohome/
+│   ├── paths.py            # единый источник путей данных (якорь = CWD)
+│   ├── config.py           # настройки через pydantic-settings (.env)
+│   ├── logging_config.py
+│   ├── database/           # слой данных (пакет по доменам), __init__ ре-экспортит API
+│   │   └── _core · schema · users · schedules · lamps · sensors · photos · motion · feeding · gecko · alerts
+│   ├── web/
+│   │   ├── app.py          # FastAPI, WebSocket, lifespan, run()
+│   │   └── routers/        # auth · admin · devices · schedules · debug · stats
+│   ├── services/
+│   │   ├── tuya.py         # tinytuya LAN + Tuya Cloud fallback + UDP listener
+│   │   ├── camera.py · motion.py · zones.py · timelapse.py · highlights.py
+│   │   ├── tunnel.py · yolo.py · debug_log.py
+│   │   └── scheduler/      # APScheduler (пакет): _core · notify · lamps · sensors · feeding · backup · jobs
+│   └── bot/
+│       ├── main.py         # точка входа бота, run()
+│       ├── handlers/       # пакет: dispatch · _helpers · access · lamps · media · schedules · feeding · motion
+│       └── keyboards.py · formatters.py · access.py · i18n.py
+├── tests/                  # pytest (config, database, feeding, scheduler logic, fresh-deploy)
+├── templates/ · static/    # Jinja2 + статика (в корне, путь через paths.py)
+├── .github/workflows/      # ci.yml (ruff/pytest/mypy) + deploy.yml
+├── gecko_detect.py · motion_debug.py · timelapse_debug.py   # standalone dev-утилиты
+├── .env.example            # шаблон конфигурации
+└── .env                    # секреты (не коммитить)
 ```
 
 ## Setup
@@ -75,9 +66,15 @@ docker compose logs -f
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
-python main.py       # веб-панель (порт 8000)
-python -m bot        # Telegram бот (отдельный процесс)
+pip install -e ".[dev]"   # пакет + dev-инструменты (ruff, mypy, pytest)
+cp .env.example .env       # заполнить значения
+
+geckohome-web    # веб-панель (порт 8000), == python -m geckohome.web.app
+geckohome-bot    # Telegram бот (отдельный процесс), == python -m geckohome.bot.main
+
+# Тесты и линт
+pytest
+ruff check src tests && ruff format --check src tests
 ```
 
 ffmpeg должен быть в PATH.
@@ -200,5 +197,5 @@ docker compose logs -f bot    # логи бота
 - Telegram API заблокирован провайдером — нужен VPN
 
 **Стрим не работает извне:**
-- Cloudflare tunnel стартует вместе с `python main.py`
+- Cloudflare tunnel стартует вместе с веб-сервером (`geckohome-web`)
 - Внешний доступ — HLS (~3с задержка), локальный — WebRTC (~1с)
