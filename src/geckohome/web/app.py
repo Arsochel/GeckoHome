@@ -25,7 +25,7 @@ from geckohome.services.motion import monitor as motion_monitor
 from geckohome.services.scheduler import load_schedules
 from geckohome.services.scheduler import shutdown as stop_scheduler
 from geckohome.services.scheduler import start as start_scheduler
-from geckohome.web.routers import admin, auth, debug, devices, schedules, stats
+from geckohome.web.routers import admin, auth, debug, devices, ingest, schedules, stats
 
 
 @asynccontextmanager
@@ -70,6 +70,7 @@ app.include_router(devices.router)
 app.include_router(schedules.router)
 app.include_router(debug.router)
 app.include_router(stats.router)
+app.include_router(ingest.router)
 
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse

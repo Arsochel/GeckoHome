@@ -158,6 +158,15 @@ async def warm_sensor_cache():
         log.info("sensor cache warmed from DB: temp=%s hum=%s", temp, hum)
 
 
+def set_sensor_value(sensor_type: str, code: str, value) -> None:
+    """Inject a sensor value from a local non-Tuya source (ingest endpoint).
+
+    Writes into the same short-term cache that get_sensor() reads first, so the
+    value flows to /status, the WebSocket and the scheduler without any Tuya call.
+    """
+    _sensor_value_cache[f"{sensor_type}:{code}"] = {"value": value, "ts": time.time()}
+
+
 def start_listener():
     global _listener_started
     with _listener_lock:
