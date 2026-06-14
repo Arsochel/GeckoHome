@@ -19,7 +19,9 @@ _lamp_cache: dict[
 _LAMP_CACHE_TTL = 15  # seconds
 
 _sensor_value_cache: dict[str, dict] = {}  # "sensor_type:code" → {"value": any, "ts": float}
-_SENSOR_CACHE_TTL = 120  # seconds — заполняется планировщиком каждые 30 мин
+# The battery thermometer only wakes ~once per hour, so a caught reading must stay
+# valid until the next expected wake instead of expiring after a couple of minutes.
+_SENSOR_CACHE_TTL = 3900  # seconds (~65 min)
 
 log = logging.getLogger(__name__)
 
@@ -165,6 +167,37 @@ def set_sensor_value(sensor_type: str, code: str, value) -> None:
     value flows to /status, the WebSocket and the scheduler without any Tuya call.
     """
     _sensor_value_cache[f"{sensor_type}:{code}"] = {"value": value, "ts": time.time()}
+
+
+def poll_thermometer() -> bool:
+    """Best-effort: catch the battery thermometer during its brief hourly wake.
+
+    The device sleeps most of the time (TCP port closed); when it wakes to report,
+    this query succeeds and we cache temp/humidity. Returns True if a value was
+    captured. Meant to be called frequently from the scheduler.
+    """
+    d = _device("thermometer")
+    if not d:
+        return False
+    try:
+        result = d.status()
+    except Exception:
+        return False
+    if not isinstance(result, dict) or result.get("Error"):
+        return False
+    dps = result.get("dps", {})
+    temp = dps.get("1")
+    hum = dps.get("2")
+    ts = time.time()
+    if temp is not None:
+        _sensor_value_cache["thermometer:va_temperature"] = {"value": temp, "ts": ts}
+    if hum is not None:
+        _sensor_value_cache["thermometer:va_humidity"] = {"value": hum, "ts": ts}
+        _sensor_value_cache["humidifier:va_humidity"] = {"value": hum, "ts": ts}
+    if temp is not None or hum is not None:
+        log.info("thermometer caught awake: temp=%s hum=%s", temp, hum)
+        return True
+    return False
 
 
 def start_listener():

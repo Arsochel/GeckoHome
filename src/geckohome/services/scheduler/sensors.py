@@ -11,6 +11,11 @@ from geckohome.services.scheduler.notify import _send_alert
 log = logging.getLogger(__name__)
 
 
+async def poll_thermometer():
+    """Frequent best-effort poll to catch the battery sensor's brief hourly wake."""
+    await asyncio.to_thread(tuya.poll_thermometer)
+
+
 async def record_sensor_readings():
     try:
         temp = await asyncio.wait_for(
