@@ -26,7 +26,7 @@ from geckohome.services.scheduler.lamps import (
     lamp_schedule,
     sync_lamp_schedules,
 )
-from geckohome.services.scheduler.sensors import poll_thermometer, record_sensor_readings
+from geckohome.services.scheduler.sensors import record_sensor_readings
 from geckohome.services.timelapse import (
     capture_timelapse_frame,
     generate_and_send_timelapse,
@@ -61,8 +61,6 @@ async def load_schedules():
             scheduler.get_job(s["id"]).pause()
 
     scheduler.add_job(record_sensor_readings, "interval", minutes=30, id="sensor_readings")
-    # battery thermometer wakes ~hourly for a few seconds — poll often to catch it
-    scheduler.add_job(poll_thermometer, "interval", seconds=20, id="thermometer_poll")
     scheduler.add_job(sync_lamp_schedules, "interval", minutes=5, id="lamp_sync")
     scheduler.add_job(check_lamp_temperature, "interval", minutes=5, id="temp_guard")
     scheduler.add_job(update_gecko_state, "interval", minutes=2, id="gecko_state")
