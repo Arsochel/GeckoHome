@@ -3,10 +3,15 @@ import logging
 import os
 import subprocess
 import tempfile
+import time
 
 from geckohome.config import CAMERA_RTSP_URL
 
 log = logging.getLogger(__name__)
+
+# If the HLS playlist hasn't been rewritten within this window the ffmpeg
+# pipeline is considered stalled/dead and gets restarted by the watchdog.
+_HLS_STALL_SECONDS = 30
 
 HLS_DIR = os.path.join(tempfile.gettempdir(), "gecko_hls")
 MEDIAMTX_CONFIG_PATH = os.path.join(tempfile.gettempdir(), "gecko_mediamtx.yml")
@@ -284,3 +289,36 @@ async def stop_mediamtx():
 
 def mediamtx_ready() -> bool:
     return _mediamtx_proc is not None and _mediamtx_proc.poll() is None
+
+
+def _hls_stalled() -> bool:
+    """True if the HLS playlist is missing or hasn't advanced recently."""
+    playlist = os.path.join(HLS_DIR, "stream.m3u8")
+    try:
+        return time.time() - os.path.getmtime(playlist) > _HLS_STALL_SECONDS
+    except OSError:
+        return True
+
+
+async def ensure_alive(bin_path: str = "") -> None:
+    """Watchdog: restart the HLS / mediamtx pipelines if they died or stalled.
+
+    The RTSP feed can drop (camera reboot, network blip) and ffmpeg/mediamtx exit
+    silently with no auto-recovery — unlike the motion monitor. Run periodically.
+    """
+    if not CAMERA_RTSP_URL:
+        return
+
+    hls_dead = _hls_proc is None or _hls_proc.poll() is not None
+    if hls_dead or _hls_stalled():
+        log.warning(
+            "camera watchdog: HLS %s — restarting",
+            "process exited" if hls_dead else "segments stalled",
+        )
+        await stop_hls()
+        await start_hls()
+
+    if bin_path and (_mediamtx_proc is None or _mediamtx_proc.poll() is not None):
+        log.warning("camera watchdog: mediamtx process exited — restarting")
+        await stop_mediamtx()
+        await start_mediamtx(bin_path)

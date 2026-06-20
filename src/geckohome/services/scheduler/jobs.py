@@ -3,6 +3,7 @@
 import asyncio
 import logging
 
+from geckohome.config import MEDIAMTX_BIN
 from geckohome.database import (
     get_schedules,
     purge_expired_debug_tokens,
@@ -10,7 +11,7 @@ from geckohome.database import (
     purge_old_photos,
     save_schedule,
 )
-from geckohome.services import tuya
+from geckohome.services import camera, tuya
 from geckohome.services.highlights import update_gecko_state
 from geckohome.services.scheduler._core import scheduler
 from geckohome.services.scheduler.backup import backup_db
@@ -81,6 +82,14 @@ async def load_schedules():
     )
     scheduler.add_job(purge_expired_debug_tokens, "cron", hour=4, minute=0, id="purge_debug_tokens")
     scheduler.add_job(check_birthday, "cron", hour=10, minute=0, id="birthday_check")
+    if camera.is_configured():
+        scheduler.add_job(
+            camera.ensure_alive,
+            "interval",
+            seconds=30,
+            kwargs={"bin_path": MEDIAMTX_BIN},
+            id="camera_watchdog",
+        )
 
 
 async def _startup_alert_check():
