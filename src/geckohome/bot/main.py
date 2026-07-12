@@ -14,6 +14,7 @@ from telegram.error import NetworkError, TimedOut
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
 from geckohome.bot.handlers import button_handler, cmd_start, cmd_status, message_handler
+from geckohome.bot.health import health_loop
 from geckohome.config import TELEGRAM_BOT_TOKEN
 from geckohome.database import init_db, load_last_feeding
 
@@ -100,20 +101,23 @@ async def main():
             signal.signal(sig, lambda s, f: stop_event.set())
 
     await app.start()
-    await app.updater.start_polling(
+    updater = app.updater
+    assert updater is not None  # builder() создаёт Updater по умолчанию
+    await updater.start_polling(
         drop_pending_updates=False,
         allowed_updates=["message", "callback_query"],
         timeout=20,
     )
 
     asyncio.create_task(_log_server())
+    asyncio.create_task(health_loop(app.bot))
 
     log.info("started")
 
     await stop_event.wait()
 
     log.info("stopping...")
-    await app.updater.stop()
+    await updater.stop()
     await app.stop()
     await app.shutdown()
     log.info("stopped")
