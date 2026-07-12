@@ -1,0 +1,19 @@
+[Unit]
+Description=GeckoHome wired sensor (DS18B20/DHT22 -> /api/sensor/ingest)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/gecko-sensor/pi_sensor.py
+Restart=always
+RestartSec=30
+# Конфигурация — заполнить свои значения:
+Environment=GECKO_INGEST_URL=http://192.168.1.100:8000/api/sensor/ingest
+Environment=SENSOR_INGEST_TOKEN=change-me
+Environment=SENSOR_INTERVAL=300
+# Раскомментировать для DHT22 (BCM-номер пина данных):
+# Environment=DHT22_PIN=4
+
+[Install]
+WantedBy=multi-user.target
