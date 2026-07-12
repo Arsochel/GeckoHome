@@ -55,6 +55,7 @@ from geckohome.database.photos import (
     get_photos,
     purge_old_photos,
     save_photo,
+    vacuum_media_db,
 )
 from geckohome.database.schedules import (
     delete_schedule,
@@ -168,6 +169,7 @@ __all__ = [
     "update_motion_photo",
     "update_motion_status",
     "update_user_info",
+    "vacuum_media_db",
     "validate_debug_token",
     "was_user_revoked",
 ]

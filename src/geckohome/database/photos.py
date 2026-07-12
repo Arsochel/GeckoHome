@@ -10,7 +10,7 @@ log = logging.getLogger(__name__)
 # ── Photos (media db) ──
 
 
-async def save_photo(data: bytes, source: str = "web", caption: str = None) -> int:
+async def save_photo(data: bytes, source: str = "web", caption: str | None = None) -> int:
     async with _media_db(write=True) as db:
         cur = await db.execute(
             "INSERT INTO photos (data, source, caption) VALUES (?,?,?)", (data, source, caption)
@@ -46,3 +46,11 @@ async def purge_old_photos():
         cur = await db.execute("DELETE FROM photos WHERE taken_at < datetime('now', '-1 hour')")
         if cur.rowcount:
             log.info("purged %d photos older than 1h", cur.rowcount)
+
+
+async def vacuum_media_db():
+    """SQLite не возвращает место ОС после DELETE — файл остаётся размером
+    с исторический максимум. Еженедельный VACUUM ужимает его обратно."""
+    async with _media_db() as db:
+        await db.execute("VACUUM")
+    log.info("media db vacuumed")

@@ -10,6 +10,7 @@ from geckohome.database import (
     purge_lamp_events,
     purge_old_photos,
     save_schedule,
+    vacuum_media_db,
 )
 from geckohome.services import camera, tuya
 from geckohome.services.highlights import update_gecko_state
@@ -70,6 +71,9 @@ async def load_schedules():
     scheduler.add_job(check_cricket_alert, "cron", hour=18, minute=0, id="cricket_alert")
     scheduler.add_job(check_cricket_alert, "interval", hours=6, id="cricket_alert_interval")
     scheduler.add_job(purge_old_photos, "interval", minutes=30, id="purge_photos")
+    scheduler.add_job(
+        vacuum_media_db, "cron", day_of_week="sun", hour=4, minute=30, id="vacuum_media"
+    )
     scheduler.add_job(purge_lamp_events, "interval", hours=12, id="purge_lamp_events")
     scheduler.add_job(capture_timelapse_frame, "interval", seconds=5, id="timelapse_capture")
     scheduler.add_job(
