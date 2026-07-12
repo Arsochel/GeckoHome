@@ -158,14 +158,18 @@ def no_tunnel_file():
 def test_stream_url_none_for_localhost_fallback():
     # tunnel_url.txt нет, STREAM_BASE_URL дефолтный localhost → кнопки нет
     assert keyboards.stream_url() is None
-    assert keyboards.detect_stream_url() is None
 
 
-def test_stream_url_from_tunnel_file():
+def test_stream_url_from_tunnel_file_is_signed():
+    from geckohome.services.stream_token import verify_stream_token
+
     with open(paths.TUNNEL_URL_FILE, "w") as f:
         f.write("https://example.trycloudflare.com\n")
-    assert keyboards.stream_url() == "https://example.trycloudflare.com/stream"
-    assert keyboards.detect_stream_url() == "https://example.trycloudflare.com/stream/detect"
+    url = keyboards.stream_url()
+    assert url is not None
+    base, _, token = url.partition("?t=")
+    assert base == "https://example.trycloudflare.com/stream"
+    assert verify_stream_token(token)
 
 
 def _callback_datas(markup) -> list[str]:

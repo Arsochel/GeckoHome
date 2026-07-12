@@ -25,6 +25,7 @@ from geckohome.services.motion import monitor as motion_monitor
 from geckohome.services.scheduler import load_schedules
 from geckohome.services.scheduler import shutdown as stop_scheduler
 from geckohome.services.scheduler import start as start_scheduler
+from geckohome.services.stream_token import verify_stream_token
 from geckohome.web.routers import admin, auth, debug, devices, ingest, schedules, stats
 
 
@@ -85,13 +86,28 @@ async def favicon():
     return FileResponse(paths.FAVICON_PATH, media_type="image/x-icon")
 
 
+def _require_stream_access(request: Request, t: str = ""):
+    """Стрим доступен по веб-сессии ИЛИ по подписанному токену из бота.
+
+    Без этого камера в квартире торчит наружу через Cloudflare-туннель
+    без какой-либо авторизации.
+    """
+    if request.session.get("user"):
+        return
+    if t and verify_stream_token(t):
+        return
+    raise HTTPException(status_code=401, detail="stream token required")
+
+
 @app.get("/stream", response_class=HTMLResponse)
-async def stream_page(request: Request):
-    return _templates.TemplateResponse(request, "stream.html")
+async def stream_page(request: Request, t: str = ""):
+    _require_stream_access(request, t)
+    return _templates.TemplateResponse(request, "stream.html", {"stream_token": t})
 
 
 @app.get("/api/stream/snapshot")
-async def stream_snapshot_internal():
+async def stream_snapshot_internal(request: Request, t: str = ""):
+    _require_stream_access(request, t)
     frame = motion_monitor.get_latest_frame()
     from fastapi import HTTPException
     from fastapi.responses import Response
@@ -104,7 +120,8 @@ async def stream_snapshot_internal():
 
 
 @app.get("/api/stream/live.mjpeg")
-async def stream_live_mjpeg():
+async def stream_live_mjpeg(request: Request, t: str = ""):
+    _require_stream_access(request, t)
 
     async def _generate():
         while True:
@@ -123,25 +140,58 @@ async def stream_live_mjpeg():
     )
 
 
-@app.websocket("/ws/status")
-async def ws_status(websocket: WebSocket):
-    await websocket.accept()
-    log.debug("WS client connected")
+_ws_clients: set[WebSocket] = set()
+_ws_broadcaster: asyncio.Task | None = None
+_ws_last_payload: str | None = None
+
+
+async def _ws_broadcast_loop():
+    """Один tuya-опрос на всех клиентов: раньше каждый WS-клиент крутил свой
+    цикл, и N соединений давали 2N tuya-вызовов каждые 5 секунд."""
+    global _ws_broadcaster, _ws_last_payload
     try:
-        while True:
+        while _ws_clients:
             uv, heat = await asyncio.gather(
                 asyncio.to_thread(tuya.get_lamp_status, "uv"),
                 asyncio.to_thread(tuya.get_lamp_status, "heat"),
             )
-            await websocket.send_text(json.dumps({"uv": uv, "heat": heat}))
+            _ws_last_payload = json.dumps({"uv": uv, "heat": heat})
+            for ws in list(_ws_clients):
+                try:
+                    await ws.send_text(_ws_last_payload)
+                except Exception:
+                    _ws_clients.discard(ws)
             await asyncio.sleep(5)
+    finally:
+        _ws_broadcaster = None
+
+
+@app.websocket("/ws/status")
+async def ws_status(websocket: WebSocket):
+    global _ws_broadcaster
+    if not websocket.session.get("user"):
+        await websocket.close(code=4401, reason="not authenticated")
+        return
+    await websocket.accept()
+    log.debug("WS client connected (%d total)", len(_ws_clients) + 1)
+    if _ws_last_payload:
+        await websocket.send_text(_ws_last_payload)
+    _ws_clients.add(websocket)
+    if _ws_broadcaster is None:
+        _ws_broadcaster = asyncio.create_task(_ws_broadcast_loop())
+    try:
+        while True:
+            await websocket.receive_text()  # держим соединение, ловим disconnect
     except Exception:
         pass
-    log.debug("WS client disconnected")
+    finally:
+        _ws_clients.discard(websocket)
+    log.debug("WS client disconnected (%d left)", len(_ws_clients))
 
 
 @app.get("/hls/{filename}")
-async def serve_hls(filename: str):
+async def serve_hls(request: Request, filename: str, t: str = ""):
+    _require_stream_access(request, t)
     path = os.path.realpath(os.path.join(camera.HLS_DIR, filename))
     hls_dir = os.path.realpath(camera.HLS_DIR)
     if not path.startswith(hls_dir + os.sep) and path != hls_dir:

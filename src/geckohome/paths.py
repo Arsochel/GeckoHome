@@ -35,3 +35,6 @@ TIMELAPSE_VIDEOS_DIR: str = str(PROJECT_ROOT / "timelapse" / "videos")
 # ── Cloudflare tunnel state ───────────────────────────────────────────────────
 TUNNEL_URL_FILE: str = str(PROJECT_ROOT / "tunnel_url.txt")
 TUNNEL_PID_FILE: str = str(PROJECT_ROOT / "tunnel.pid")
+
+# ── Stream access token secret (shared by web and bot processes) ─────────────
+STREAM_SECRET_FILE: str = str(PROJECT_ROOT / "stream_secret.txt")

@@ -12,6 +12,7 @@ devices.json
 .claude/
 tunnel_url.txt
 tunnel.pid
+stream_secret.txt
 backups/
 timelapse/
 bin/

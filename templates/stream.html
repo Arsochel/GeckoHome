@@ -37,16 +37,25 @@
     const mjpeg = document.getElementById('mjpeg');
     const overlay = document.getElementById('overlay');
     const base = window.location.origin;
+    const streamToken = {{ (stream_token or '') | tojson }};
+
+    function mjpegUrl(bust) {
+        const params = new URLSearchParams();
+        if (streamToken) params.set('t', streamToken);
+        if (bust) params.set('_', Date.now());
+        const qs = params.toString();
+        return base + '/api/stream/live.mjpeg' + (qs ? '?' + qs : '');
+    }
 
     function connectMJPEG() {
         v.style.display = 'none';
         mjpeg.style.display = 'block';
-        mjpeg.src = base + '/api/stream/live.mjpeg';
+        mjpeg.src = mjpegUrl(false);
         mjpeg.onload = () => overlay.classList.add('hidden');
         mjpeg.onerror = () => {
             overlay.classList.remove('hidden');
             overlay.textContent = 'Нет сигнала';
-            setTimeout(() => { mjpeg.src = base + '/api/stream/live.mjpeg?' + Date.now(); }, 3000);
+            setTimeout(() => { mjpeg.src = mjpegUrl(true); }, 3000);
         };
     }
 
