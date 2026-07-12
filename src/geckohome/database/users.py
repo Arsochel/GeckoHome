@@ -100,7 +100,9 @@ async def was_user_revoked(user_id: int) -> bool:
         return await cur.fetchone() is not None
 
 
-async def add_allowed_user(user_id: int, username: str = None, first_name: str = None):
+async def add_allowed_user(
+    user_id: int, username: str | None = None, first_name: str | None = None
+):
     async with _db(write=True) as db:
         await db.execute(
             """INSERT INTO allowed_users (user_id, username, first_name)
@@ -159,7 +161,9 @@ async def get_blocked_users() -> list[dict]:
 # ── Access requests ──
 
 
-async def add_access_request(user_id: int, username: str = None, first_name: str = None):
+async def add_access_request(
+    user_id: int, username: str | None = None, first_name: str | None = None
+):
     async with _db(write=True) as db:
         await db.execute(
             "INSERT OR IGNORE INTO access_requests (user_id, username, first_name) VALUES (?,?,?)",

@@ -1,12 +1,14 @@
 """Зональная детекция геккона — общая логика для motion monitor и gecko_detect."""
 
+from typing import Any
+
 import cv2
 import numpy as np
 
 # Разрешение в котором откалиброваны зоны (DISP_W x DISP_H из gecko_detect.py)
 ZONE_W, ZONE_H = 450, 800
 
-PRESET_ZONES = [
+PRESET_ZONES: list[dict[str, Any]] = [
     {
         "name": "skull",
         "pts": [

@@ -27,8 +27,7 @@ TIMELAPSE_MOTION_WINDOW = 60  # секунд с последнего движе�
 def _strip_exif(path: str):
     """Применяет EXIF orientation к пикселям и убирает EXIF метаданные."""
     try:
-        img = Image.open(path)
-        img = ImageOps.exif_transpose(img)
+        img = ImageOps.exif_transpose(Image.open(path))
         img.save(path, quality=95, exif=b"")
     except Exception as e:
         log.debug("strip_exif failed: %s", e)
@@ -109,7 +108,7 @@ def _compute_diff(gray1, gray2, mask=None):
 
 def _collect_frames(from_dt: datetime, to_dt: datetime) -> list[tuple[str, str]]:
     """Возвращает список (frames_dir, filename) за период [from_dt, to_dt)."""
-    result = []
+    result: list[tuple[str, str]] = []
     # Перебираем все папки с датами которые могут пересекаться с периодом
     if not os.path.isdir(TIMELAPSE_FRAMES_DIR):
         return result
@@ -187,8 +186,7 @@ def _normalize_frames(frame_pairs: list[tuple[str, str]]) -> tuple[str, list[str
         dst_name = f"{i:06d}.jpg"
         dst = os.path.join(tmp_dir, dst_name)
         try:
-            img = Image.open(src)
-            img = ImageOps.exif_transpose(img)
+            img = ImageOps.exif_transpose(Image.open(src))
             img.save(dst, quality=95, exif=b"")
             names.append(dst_name)
         except Exception as e:

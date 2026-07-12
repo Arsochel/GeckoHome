@@ -24,3 +24,5 @@ convert_dataset.py
 timelapse_debug.py
 docs/
 logs/
+.coverage
+coverage.xml

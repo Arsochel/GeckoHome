@@ -182,6 +182,11 @@ class MotionMonitor:
     def is_running(self) -> bool:
         return self._loop is not None and not self._stop_event.is_set()
 
+    def _submit(self, coro) -> None:
+        """Планирует корутину на основном event loop из потока захвата."""
+        assert self._loop is not None  # выставляется в start() до запуска потока
+        asyncio.run_coroutine_threadsafe(coro, self._loop)
+
     async def start(self):
         if not CAMERA_RTSP_URL:
             log.warning("no CAMERA_RTSP_URL, skipping motion monitor")
@@ -319,8 +324,8 @@ class MotionMonitor:
                         with _motion_lock:
                             _last_motion_time = datetime.now()
                         log.info("motion started")
-                        asyncio.run_coroutine_threadsafe(set_gecko_state("roaming"), self._loop)
-                        asyncio.run_coroutine_threadsafe(self._record_and_send(), self._loop)
+                        self._submit(set_gecko_state("roaming"))
+                        self._submit(self._record_and_send())
                     else:
                         with _motion_lock:
                             _last_motion_time = datetime.now()
@@ -340,7 +345,7 @@ class MotionMonitor:
                     log.info("motion ended — %d frames", len(captured))
 
                     if len(captured) >= MIN_FRAMES:
-                        asyncio.run_coroutine_threadsafe(self._process(captured), self._loop)
+                        self._submit(self._process(captured))
                     else:
                         for p in captured:
                             try:
@@ -363,9 +368,7 @@ class MotionMonitor:
                                 conf = float(box.conf[0])
                                 cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
                                 zone = detect_zone(cx, cy)
-                                asyncio.run_coroutine_threadsafe(
-                                    log_gecko_zone(zone, conf), self._loop
-                                )
+                                self._submit(log_gecko_zone(zone, conf))
                         except Exception as e:
                             log.error("YOLO error: %s", e)
 

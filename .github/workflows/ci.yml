@@ -45,12 +45,17 @@ jobs:
 
   typecheck:
     runs-on: ubuntu-latest
-    continue-on-error: true # informational until the codebase is fully typed
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install mypy pydantic pydantic-settings
-      - name: Mypy (typed modules)
-        run: mypy src/geckohome/config.py src/geckohome/paths.py
+          cache: pip
+      # Full runtime deps (minus ultralytics/torch — stubs are ignored anyway)
+      # so mypy sees real types for fastapi/PTB/httpx/etc.
+      - name: Install deps for type checking
+        run: |
+          sed '/ultralytics/d' requirements.txt > /tmp/reqs-mypy.txt
+          pip install -r /tmp/reqs-mypy.txt mypy
+      - name: Mypy
+        run: mypy src/geckohome

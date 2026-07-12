@@ -56,7 +56,7 @@ def get_recent(service: str | None = None, limit: int = 200) -> list[dict]:
     if service and service != "all":
         key = f"services.{service}"
         return list(_buffers.get(key, deque()))[-limit:]
-    out = []
+    out: list[dict] = []
     for buf in _buffers.values():
         out.extend(buf)
     out.sort(key=lambda r: r["ts"])

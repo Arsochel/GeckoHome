@@ -29,6 +29,7 @@ def _run():
             with open(TUNNEL_PID_FILE, "w") as f:
                 f.write(str(proc.pid))
 
+            assert proc.stderr is not None  # stderr=PIPE выше
             for line in proc.stderr:
                 line = line.decode(errors="ignore").strip()
                 m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)

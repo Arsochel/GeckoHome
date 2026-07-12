@@ -32,6 +32,7 @@ async def stats_summary(_=_auth):
             " FROM feedings"
         )
         r = await cur.fetchone()
+        assert r is not None  # агрегат без GROUP BY всегда возвращает строку
         total_feedings = int(r["cnt"])
         total_crickets = int(r["total_c"])
         vitamins_count = int(r["vit_cnt"])
@@ -59,6 +60,7 @@ async def stats_summary(_=_auth):
             "SELECT AVG(crickets) as avg FROM feedings WHERE crickets IS NOT NULL AND crickets > 0"
         )
         r = await cur.fetchone()
+        assert r is not None
         avg_crickets = round(float(r["avg"]), 1) if r["avg"] else None
 
         days_since = None
@@ -70,12 +72,14 @@ async def stats_summary(_=_auth):
             "SELECT COUNT(*) as cnt FROM motion_events WHERE created_at >= ?", (cutoff,)
         )
         r = await cur.fetchone()
+        assert r is not None
         motion_24h = int(r["cnt"])
 
         cur = await db.execute(
             "SELECT COALESCE(SUM(count), 0) as total FROM cricket_batches WHERE count > 0"
         )
         r = await cur.fetchone()
+        assert r is not None
         total_bought = int(r["total"])
 
     remaining = await get_cricket_remaining()

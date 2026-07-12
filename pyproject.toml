@@ -123,8 +123,17 @@ module = [
     "ultralytics.*",
     "apscheduler.*",
     "numpy.*",
+    "psutil.*",
 ]
 ignore_missing_imports = true
+
+# python-telegram-bot объявляет update.message / effective_user / user_data
+# как Optional во всех хэндлерах — для наших фильтров это гарантированно
+# не-None, и honest-проверки дали бы ~90 бессмысленных guard'ов. Отключаем
+# только эти два кода и только для хэндлеров; остальные проверки активны.
+[[tool.mypy.overrides]]
+module = ["geckohome.bot.handlers.*"]
+disable_error_code = ["union-attr", "index"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Pytest + coverage
