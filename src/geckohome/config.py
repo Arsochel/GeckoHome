@@ -90,6 +90,9 @@ class Settings(BaseSettings):
     # ── Local sensor ingest (cloud-free readings pushed from any LAN source) ─────
     sensor_ingest_token: str = ""
 
+    # ── Offsite backup (optional): rclone remote, e.g. "r2:gecko-backups" ────────
+    backup_rclone_remote: str = ""
+
     @field_validator("tuya_cloud_region")
     @classmethod
     def _normalize_region(cls, v: str) -> str:
@@ -179,6 +182,8 @@ HUM_ALERT_MAX = settings.hum_alert_max
 FEEDING_ALERT_DAYS = settings.feeding_alert_days
 
 SENSOR_INGEST_TOKEN = settings.sensor_ingest_token
+
+BACKUP_RCLONE_REMOTE = settings.backup_rclone_remote
 
 TUYA_CLOUD_KEY = settings.tuya_cloud_key
 TUYA_CLOUD_SECRET = settings.tuya_cloud_secret
