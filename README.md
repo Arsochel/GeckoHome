@@ -41,6 +41,7 @@ GeckoHome/
 ├── tests/                  # pytest (config, database, feeding, scheduler logic, fresh-deploy)
 ├── templates/ · static/    # Jinja2 + статика (в корне, путь через paths.py)
 ├── .github/workflows/      # ci.yml (ruff/pytest/mypy) + deploy.yml
+├── contrib/pi-sensor/      # проводной сенсор на Raspberry Pi → /api/sensor/ingest
 ├── gecko_detect.py · motion_debug.py · timelapse_debug.py   # standalone dev-утилиты
 ├── .env.example            # шаблон конфигурации
 └── .env                    # секреты (не коммитить)
@@ -178,7 +179,9 @@ docker compose logs -f bot    # логи бота
 ### Автоматика
 - Расписания ламп с восстановлением после перезапуска
 - Запись показаний сенсоров каждые 30 мин
-- Ежедневный бэкап БД (хранится 7 копий)
+- Ежедневный бэкап обеих БД (7 копий основной, 2 медиа) + опциональный offsite-синк через rclone (`BACKUP_RCLONE_REMOTE`)
+- Еженедельный VACUUM медиа-базы (SQLite не отдаёт место после DELETE сам)
+- Healthcheck: бот шлёт алерт, если веб-процесс перестал писать показания
 - Детекция движения → клип → Telegram
 - Зональная детекция геккона через YOLO (skull / water / sauna)
 - Таймлапс: захват кадров при движении → генерация MP4 в 12:00

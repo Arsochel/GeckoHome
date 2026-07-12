@@ -9,9 +9,7 @@ from geckohome.web.routers import ingest as ing
 
 async def test_ingest_writes_value_reachable_via_get_sensor(monkeypatch):
     monkeypatch.setattr(ing, "SENSOR_INGEST_TOKEN", "secret")
-    r = await ing.ingest_sensor(
-        ing.SensorReading(temperature=25.3, humidity=48), x_token="secret"
-    )
+    r = await ing.ingest_sensor(ing.SensorReading(temperature=25.3, humidity=48), x_token="secret")
     assert r["ok"] is True
     assert r["temperature_x10"] == 253
     assert r["humidity"] == 48
