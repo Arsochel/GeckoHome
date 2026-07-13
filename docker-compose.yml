@@ -1,5 +1,14 @@
+# json-file без лимита растёт бесконечно — ffmpeg/motion/tuya пишут постоянно
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   app:
+    <<: *logging
     build: .
     command: geckohome-web
     ports:
@@ -24,6 +33,7 @@ services:
       autoheal: "true"
 
   bot:
+    <<: *logging
     build: .
     command: geckohome-bot
     volumes:
@@ -42,6 +52,7 @@ services:
   # docker не перезапускает unhealthy-контейнеры сам — autoheal делает это
   # за него (следит за контейнерами с label autoheal=true)
   autoheal:
+    <<: *logging
     image: willfarrell/autoheal:latest
     restart: unless-stopped
     environment:
