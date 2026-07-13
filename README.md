@@ -186,6 +186,24 @@ docker compose logs -f bot    # логи бота
 - Зональная детекция геккона через YOLO (skull / water / sauna)
 - Таймлапс: захват кадров при движении → генерация MP4 в 12:00
 
+## Backups
+
+Ежедневно в 3:00 обе базы копируются в `backups/` (`gecko_*` — 7 копий, `gecko_media_*` — 2).
+С настроенным `BACKUP_RCLONE_REMOTE` каталог дополнительно синкается в облако.
+
+**Восстановление:**
+
+```bash
+docker compose down                       # остановить, чтобы никто не писал в базы
+cp backups/gecko_YYYYMMDD_HHMMSS.db gecko.db
+cp backups/gecko_media_YYYYMMDD_HHMMSS.db gecko_media.db
+rm -f gecko.db-wal gecko.db-shm gecko_media.db-wal gecko_media.db-shm   # WAL-сателлиты от старой базы
+docker compose up -d
+
+# из облака (если локальные бэкапы погибли вместе с диском):
+rclone copy r2:gecko-backups backups/
+```
+
 ## Troubleshooting
 
 **Лампы не отвечают:**
