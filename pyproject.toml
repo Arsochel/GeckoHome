@@ -28,7 +28,7 @@ dependencies = [
     "pydantic==2.13.4",
     "pydantic-settings>=2.5,<3",
     "httpx==0.28.1",
-    "opencv-python-headless==4.13.0.92",
+    "opencv-python-headless==5.0.0.93",
     "tinytuya==1.18.0",
     "bcrypt==5.0.0",
     "pillow==12.2.0",
