@@ -1,5 +1,4 @@
 import logging
-import secrets
 import time
 from collections import defaultdict, deque
 
@@ -47,19 +46,9 @@ def get_current_user(request: Request) -> str:
     return user
 
 
-def get_csrf_token(request: Request) -> str:
-    if "csrf_token" not in request.session:
-        request.session["csrf_token"] = secrets.token_hex(16)
-    return request.session["csrf_token"]
-
-
-async def verify_csrf(request: Request):
-    token = request.session.get("csrf_token", "")
-    if request.method in ("POST", "PUT", "DELETE"):
-        form = await request.form()
-        submitted = form.get("csrf_token", "")
-        if not token or submitted != token:
-            raise HTTPException(status_code=403, detail="CSRF token mismatch")
+# CSRF-хелперы удалены как мёртвый код: фронт ходит fetch'ами с JSON (не
+# формами), а SameSite=lax на session-cookie не отдаёт куки кросс-сайтовым
+# POST-запросам — этого достаточно для одно-админной панели.
 
 
 @router.get("/login", response_class=HTMLResponse)
