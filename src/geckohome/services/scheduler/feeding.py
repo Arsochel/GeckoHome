@@ -5,6 +5,7 @@ from datetime import datetime
 
 import httpx
 
+from geckohome import config
 from geckohome.config import FEEDING_ALERT_DAYS, TELEGRAM_BOT_TOKEN, TELEGRAM_SUPER_ADMINS
 from geckohome.database import (
     get_blocked_user_ids,
@@ -68,7 +69,8 @@ async def check_feeding_alert():
         text += "\n💊 Это кормление *с витаминами*"
     if "hornworm" in supplements:
         text += "\n🐛 Дать *табачного бражника*"
-    text += "\n🦗 Покорми сверчков сегодня — через 2 дня готовы"
+    if config.CRICKET_CARE_HINTS:
+        text += "\n🦗 Покорми сверчков сегодня — через 2 дня готовы"
 
     rows = [[{"text": "🍎 Покормил", "callback_data": "alert_fed"}]]
     event_row = []

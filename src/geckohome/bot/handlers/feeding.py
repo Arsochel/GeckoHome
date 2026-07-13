@@ -3,6 +3,7 @@ from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from geckohome import config
 from geckohome.bot.i18n import get_lang
 from geckohome.bot.keyboards import cricket_count_keyboard, feeding_keyboard
 from geckohome.config import TELEGRAM_SUPER_ADMINS
@@ -128,9 +129,13 @@ async def _handle_cricket_bought(query, user_id, ctx):
     await log_cricket_purchase()
     lang = await get_lang(user_id)
     if lang == "en":
-        msg = "🦗 Cricket batch logged! Remember to feed them today."
+        msg = "🦗 Cricket batch logged!"
+        if config.CRICKET_CARE_HINTS:
+            msg += " Remember to feed them today."
     else:
-        msg = "🦗 Партия сверчков записана! Покорми их сегодня."
+        msg = "🦗 Партия сверчков записана!"
+        if config.CRICKET_CARE_HINTS:
+            msg += " Покорми их сегодня."
     await query.answer(msg, show_alert=True)
     await _safe_edit(
         query,
@@ -366,7 +371,8 @@ async def _handle_alert_fed_cancel(query):
         text += "\n💊 Это кормление *с витаминами*"
     if "hornworm" in supplements:
         text += "\n🐛 Дать *табачного бражника*"
-    text += "\n🦗 Покорми сверчков сегодня — через 2 дня готовы"
+    if config.CRICKET_CARE_HINTS:
+        text += "\n🦗 Покорми сверчков сегодня — через 2 дня готовы"
 
     rows = [[InlineKeyboardButton("🍎 Покормил", callback_data="alert_fed")]]
     event_row = []
