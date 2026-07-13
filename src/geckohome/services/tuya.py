@@ -1,7 +1,9 @@
+import json
 import logging
 import socket
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import tinytuya
 
@@ -37,6 +39,163 @@ def _get_cloud():
     return _cloud
 
 
+# ── Runtime IP rediscovery ─────────────────────────────────────────────────────
+# Реальный инцидент 2026-07-13: роутер сменил подсеть, IP из .env протухли,
+# лампы стали Device Unreachable, и off не доходил всю ночь. Здесь два пути
+# самолечения: пассивный (gwId+ip из UDP-бродкастов Tuya) и активный (при
+# фейлах — скан кандидатных /24 по порту 6668 с верификацией локальным ключом).
+
+_discovered_ips: dict[str, str] = {}  # device_id → ip, найденный в рантайме
+_rediscover_lock = threading.Lock()
+_rediscover_running = False
+_last_rediscover = 0.0
+_REDISCOVER_COOLDOWN = 600  # секунд между активными сканами
+_PROBE_TIMEOUT = 0.3  # секунд на TCP-пробу одного IP
+
+
+def _effective_ip(device_type: str) -> str | None:
+    """IP устройства: найденный в рантайме приоритетнее сконфигуренного."""
+    device_id = DEVICE_IDS.get(device_type, "")
+    return _discovered_ips.get(device_id) or DEVICE_LOCAL.get(device_type, {}).get("ip") or None
+
+
+def _handle_discovery_broadcast(data: bytes):
+    """Парсит UDP-бродкаст Tuya (gwId+ip) и обновляет карту адресов."""
+    try:
+        msg = json.loads(tinytuya.decrypt_udp(data))
+    except Exception:
+        return
+    gwid, ip = msg.get("gwId"), msg.get("ip")
+    if not gwid or not ip:
+        return
+    known = {did: name for name, did in DEVICE_IDS.items() if did}
+    if gwid not in known:
+        return
+    device_type = known[gwid]
+    if _discovered_ips.get(gwid) == ip:
+        return
+    old = _effective_ip(device_type)
+    _discovered_ips[gwid] = ip
+    if ip != old:
+        log.warning("discovery: %s moved %s → %s (broadcast)", device_type, old, ip)
+
+
+def _candidate_subnets() -> set[str]:
+    """/24-подсети, где могут жить устройства: LAN_SUBNETS из конфига,
+    производные от IP устройств, свои интерфейсы и host.docker.internal.
+
+    LAN_SUBNETS — главный источник в Docker: host.docker.internal на Docker
+    Desktop отдаёт внутренний NAT (192.168.65.x), а не реальную LAN.
+    """
+    from geckohome import config
+
+    prefixes = set()
+    for raw in config.LAN_SUBNETS.split(","):
+        raw = raw.strip().removesuffix("/24").removesuffix(".0")
+        if raw and raw.count(".") == 2:
+            prefixes.add(raw)
+    for info in DEVICE_LOCAL.values():
+        ip = info.get("ip", "")
+        if ip and "." in ip:
+            prefixes.add(ip.rsplit(".", 1)[0])
+    for probe in ("host.docker.internal", None):
+        try:
+            if probe:
+                ip = socket.gethostbyname(probe)
+            else:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 53))
+                ip = s.getsockname()[0]
+                s.close()
+            if ip and not ip.startswith("127."):
+                prefixes.add(ip.rsplit(".", 1)[0])
+        except OSError:
+            pass
+    return prefixes
+
+
+def _port_open(ip: str, port: int = 6668) -> bool:
+    try:
+        with socket.create_connection((ip, port), timeout=_PROBE_TIMEOUT):
+            return True
+    except OSError:
+        return False
+
+
+def _probe_device(device_type: str, ip: str) -> bool:
+    """Проверяет, что по ip живёт именно это устройство (ключом)."""
+    info = DEVICE_LOCAL.get(device_type, {})
+    device_id = DEVICE_IDS.get(device_type, "")
+    if not device_id or not info.get("key"):
+        return False
+    try:
+        d = tinytuya.Device(
+            dev_id=device_id,
+            address=ip,
+            local_key=info["key"],
+            version=info.get("version", "3.4"),
+        )
+        d.set_socketRetryLimit(1)
+        d.set_socketTimeout(2)
+        result = d.status()
+        return isinstance(result, dict) and not result.get("Error") and "dps" in result
+    except Exception:
+        return False
+
+
+def rediscover_devices(force: bool = False) -> dict[str, str]:
+    """Скан кандидатных подсетей: TCP 6668, потом верификация ключом.
+
+    Возвращает {device_type: new_ip} для найденных. Троттлится кулдауном.
+    """
+    global _last_rediscover, _rediscover_running
+    with _rediscover_lock:
+        if _rediscover_running:
+            return {}
+        if not force and time.time() - _last_rediscover < _REDISCOVER_COOLDOWN:
+            return {}
+        _rediscover_running = True
+        _last_rediscover = time.time()
+
+    try:
+        targets = [
+            dt for dt, info in DEVICE_LOCAL.items() if DEVICE_IDS.get(dt) and info.get("key")
+        ]
+        if not targets:
+            return {}
+        subnets = _candidate_subnets()
+        candidates = [f"{p}.{i}" for p in subnets for i in range(1, 255)]
+        log.info("rediscovery: scanning %d IPs in %s", len(candidates), sorted(subnets))
+        with ThreadPoolExecutor(max_workers=64) as pool:
+            results = pool.map(_port_open, candidates)
+            open_ips = [ip for ip, ok in zip(candidates, results, strict=True) if ok]
+        log.info("rediscovery: %d hosts with 6668 open: %s", len(open_ips), open_ips)
+
+        found: dict[str, str] = {}
+        remaining = list(targets)
+        for ip in open_ips:
+            for dt in list(remaining):
+                if _probe_device(dt, ip):
+                    old = _effective_ip(dt)
+                    _discovered_ips[DEVICE_IDS[dt]] = ip
+                    remaining.remove(dt)
+                    found[dt] = ip
+                    if ip != old:
+                        log.warning("rediscovery: %s moved %s → %s", dt, old, ip)
+                    break
+        return found
+    finally:
+        with _rediscover_lock:
+            _rediscover_running = False
+
+
+def _schedule_rediscovery():
+    """Фоновое переоткрытие; no-op если кулдаун не вышел или скан уже идёт."""
+    if _rediscover_running or time.time() - _last_rediscover < _REDISCOVER_COOLDOWN:
+        return
+    threading.Thread(target=rediscover_devices, daemon=True).start()
+
+
 # ── Passive UDP listener for battery devices ──────────────────────────────────
 # Кэш последних значений полученных из local broadcast
 _sensor_cache: dict[str, dict] = {}  # device_id → {"temp": int, "hum": int, "ts": float}
@@ -47,14 +206,15 @@ _listener_lock = threading.Lock()
 def _listener_thread():
     device_id = DEVICE_IDS.get("thermometer", "")
     local_key = DEVICE_LOCAL.get("thermometer", {}).get("key", "")
-    if not device_id or not local_key:
-        return
 
-    # создаём Device только для расшифровки (соединение не открывается)
-    ip = DEVICE_LOCAL.get("thermometer", {}).get("ip") or "192.168.3.16"
-    d = tinytuya.Device(dev_id=device_id, address=ip, local_key=local_key, version=3.4)
-    d.set_socketRetryLimit(0)
-    d.set_socketTimeout(0)
+    # Device нужен только для расшифровки данных термометра (соединение не
+    # открывается); discovery-парсинг бродкастов работает и без него.
+    d = None
+    if device_id and local_key:
+        ip = DEVICE_LOCAL.get("thermometer", {}).get("ip") or "192.168.3.16"
+        d = tinytuya.Device(dev_id=device_id, address=ip, local_key=local_key, version=3.4)
+        d.set_socketRetryLimit(0)
+        d.set_socketTimeout(0)
 
     socks = []
     for port in (6666, 6667):
@@ -70,11 +230,14 @@ def _listener_thread():
     if not socks:
         return
 
-    log.info("UDP listener started for thermometer")
+    log.info("UDP listener started (discovery + thermometer)")
     while True:
         for s in socks:
             try:
                 data, addr = s.recvfrom(4096)
+                _handle_discovery_broadcast(data)
+                if d is None:
+                    continue
                 try:
                     msg = d._decode_payload(data)
                     dps = msg.get("dps", {}) if isinstance(msg, dict) else {}
@@ -197,12 +360,13 @@ def get_sensor_cached(sensor_type: str, code: str):
 def _outlet(device_type: str):
     info = DEVICE_LOCAL.get(device_type, {})
     device_id = DEVICE_IDS.get(device_type, "")
-    if not device_id or not info.get("ip") or not info.get("key"):
+    ip = _effective_ip(device_type)
+    if not device_id or not ip or not info.get("key"):
         return None
     try:
         d = tinytuya.OutletDevice(
             dev_id=device_id,
-            address=info["ip"],
+            address=ip,
             local_key=info["key"],
             version=info.get("version", "3.4"),
         )
@@ -217,12 +381,13 @@ def _outlet(device_type: str):
 def _device(device_type: str):
     info = DEVICE_LOCAL.get(device_type, {})
     device_id = DEVICE_IDS.get(device_type, "")
-    if not device_id or not info.get("ip") or not info.get("key"):
+    ip = _effective_ip(device_type)
+    if not device_id or not ip or not info.get("key"):
         return None
     try:
         d = tinytuya.Device(
             dev_id=device_id,
-            address=info["ip"],
+            address=ip,
             local_key=info["key"],
             version=info.get("version", "3.3"),
         )
@@ -247,6 +412,7 @@ def get_lamp_status(lamp_type: str) -> dict:
         if result.get("Error"):
             log.warning("status %s: %s", lamp_type, result["Error"])
             _lamp_cache[lamp_type] = {"online": False, "switch": last_switch, "ts": time.time()}
+            _schedule_rediscovery()
             return {"online": False, "switch": last_switch}
         switch = result.get("dps", {}).get("1")
         _lamp_cache[lamp_type] = {"online": True, "switch": switch, "ts": time.time()}
@@ -254,6 +420,7 @@ def get_lamp_status(lamp_type: str) -> dict:
     except Exception as e:
         log.error("status %s error: %s", lamp_type, e)
         _lamp_cache[lamp_type] = {"online": False, "switch": last_switch, "ts": time.time()}
+        _schedule_rediscovery()
         return {"online": False, "switch": last_switch}
 
 
@@ -329,10 +496,12 @@ def switch_lamp(lamp_type: str, on: bool) -> bool:
         result = d.turn_on() if on else d.turn_off()
         if result.get("Error"):
             log.warning("switch_lamp(%s, %s): %s", lamp_type, on, result["Error"])
+            _schedule_rediscovery()
             return False
         log.info("switch_lamp(%s, %s): OK", lamp_type, on)
         _lamp_cache[lamp_type] = {"online": True, "switch": on, "ts": time.time()}
         return True
     except Exception as e:
         log.error("switch_lamp(%s, %s) error: %s", lamp_type, on, e)
+        _schedule_rediscovery()
         return False

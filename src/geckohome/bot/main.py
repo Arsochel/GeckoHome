@@ -55,6 +55,7 @@ async def main():
 
     await tuya.warm_lamp_cache()
     await tuya.warm_sensor_cache()
+    tuya.start_listener()  # discovery IP устройств: бот тоже переключает лампы
 
     async def _error_handler(update, context):
         if isinstance(context.error, (NetworkError, TimedOut)):

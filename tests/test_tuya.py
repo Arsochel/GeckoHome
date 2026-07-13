@@ -16,6 +16,9 @@ def fresh_caches(monkeypatch):
     monkeypatch.setattr(tuya, "_lamp_cache", {})
     monkeypatch.setattr(tuya, "_sensor_value_cache", {})
     monkeypatch.setattr(tuya, "_sensor_cache", {})
+    monkeypatch.setattr(tuya, "_discovered_ips", {})
+    monkeypatch.setattr(tuya, "_last_rediscover", 0.0)
+    monkeypatch.setattr(tuya, "_rediscover_running", False)
 
 
 class FakeOutlet:
@@ -189,6 +192,101 @@ def test_cloud_failure_returns_none(monkeypatch):
     assert tuya._get_sensor_cloud("dev123", "va_temperature") is None
     monkeypatch.setattr(tuya, "_get_cloud", lambda: None)
     assert tuya._get_sensor_cloud("dev123", "va_temperature") is None
+
+
+# ── rediscovery: самолечение после смены IP (инцидент 2026-07-13) ──
+
+
+def _configure_uv(monkeypatch):
+    monkeypatch.setitem(tuya.DEVICE_IDS, "uv_lamp", "uvid123")
+    monkeypatch.setitem(
+        tuya.DEVICE_LOCAL, "uv_lamp", {"ip": "192.168.3.6", "key": "k", "version": "3.5"}
+    )
+
+
+def test_effective_ip_prefers_discovered(monkeypatch):
+    _configure_uv(monkeypatch)
+    assert tuya._effective_ip("uv_lamp") == "192.168.3.6"
+    tuya._discovered_ips["uvid123"] = "192.169.3.20"
+    assert tuya._effective_ip("uv_lamp") == "192.169.3.20"
+
+
+def test_broadcast_updates_known_device(monkeypatch):
+    import tinytuya
+
+    _configure_uv(monkeypatch)
+    monkeypatch.setattr(
+        tinytuya,
+        "decrypt_udp",
+        lambda data: '{"gwId": "uvid123", "ip": "192.169.3.20", "version": "3.5"}',
+    )
+    tuya._handle_discovery_broadcast(b"whatever")
+    assert tuya._effective_ip("uv_lamp") == "192.169.3.20"
+
+
+def test_broadcast_ignores_unknown_and_garbage(monkeypatch):
+    import tinytuya
+
+    _configure_uv(monkeypatch)
+    monkeypatch.setattr(
+        tinytuya, "decrypt_udp", lambda data: '{"gwId": "stranger", "ip": "1.2.3.4"}'
+    )
+    tuya._handle_discovery_broadcast(b"x")
+    assert tuya._discovered_ips == {}
+
+    def _boom(data):
+        raise ValueError("not tuya")
+
+    monkeypatch.setattr(tinytuya, "decrypt_udp", _boom)
+    tuya._handle_discovery_broadcast(b"x")  # не падает
+    assert tuya._discovered_ips == {}
+
+
+def test_candidate_subnets_include_lan_subnets_env(monkeypatch):
+    from geckohome import config
+
+    _configure_uv(monkeypatch)
+    monkeypatch.setattr(config, "LAN_SUBNETS", "192.169.3.0/24, 10.0.5")
+    subnets = tuya._candidate_subnets()
+    assert "192.169.3" in subnets
+    assert "10.0.5" in subnets
+    assert "192.168.3" in subnets  # производная от сконфигуренного IP лампы
+
+
+def test_rediscover_finds_moved_device(monkeypatch):
+    _configure_uv(monkeypatch)
+    monkeypatch.setattr(tuya, "_candidate_subnets", lambda: {"192.169.3"})
+    monkeypatch.setattr(tuya, "_port_open", lambda ip: ip == "192.169.3.20")
+    monkeypatch.setattr(
+        tuya, "_probe_device", lambda dt, ip: dt == "uv_lamp" and ip == "192.169.3.20"
+    )
+
+    found = tuya.rediscover_devices(force=True)
+
+    assert found == {"uv_lamp": "192.169.3.20"}
+    assert tuya._effective_ip("uv_lamp") == "192.169.3.20"
+
+
+def test_rediscover_respects_cooldown(monkeypatch):
+    _configure_uv(monkeypatch)
+    monkeypatch.setattr(tuya, "_candidate_subnets", lambda: {"192.169.3"})
+    monkeypatch.setattr(tuya, "_port_open", lambda ip: False)
+    monkeypatch.setattr(tuya, "_probe_device", lambda dt, ip: False)
+
+    assert tuya.rediscover_devices(force=True) == {}
+    # кулдаун не вышел — без force скан не запускается
+    monkeypatch.setattr(
+        tuya, "_candidate_subnets", lambda: pytest.fail("скан не должен был начаться")
+    )
+    assert tuya.rediscover_devices() == {}
+
+
+def test_switch_failure_schedules_rediscovery(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tuya, "_schedule_rediscovery", lambda: calls.append(1))
+    monkeypatch.setattr(tuya, "_outlet", lambda t: FakeOutlet(error="unreachable"))
+    tuya.switch_lamp("uv", False)
+    assert calls  # фейл переключения запускает переоткрытие
 
 
 # ── warm-кэши из БД ──

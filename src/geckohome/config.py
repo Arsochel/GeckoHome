@@ -86,9 +86,18 @@ class Settings(BaseSettings):
 
     # ── Feeding ──────────────────────────────────────────────────────────────────
     feeding_alert_days: int = 2
+    # Подсказки по уходу за живыми сверчками (gut-loading). False — если кормовые
+    # насекомые замороженные и кормить их не нужно.
+    cricket_care_hints: bool = True
 
     # ── Local sensor ingest (cloud-free readings pushed from any LAN source) ─────
     sensor_ingest_token: str = ""
+
+    # ── LAN subnets for device rediscovery ───────────────────────────────────────
+    # Из Docker-контейнера свою LAN не угадать (host.docker.internal отдаёт NAT
+    # Docker Desktop). Список /24, где могут жить устройства, через запятую:
+    # "192.168.3.0/24, 192.169.3.0/24". Пусто — только производные от конфига.
+    lan_subnets: str = ""
 
     # ── Offsite backup (optional): rclone remote, e.g. "r2:gecko-backups" ────────
     backup_rclone_remote: str = ""
@@ -180,8 +189,10 @@ HUM_ALERT_MIN = settings.hum_alert_min
 HUM_ALERT_MAX = settings.hum_alert_max
 
 FEEDING_ALERT_DAYS = settings.feeding_alert_days
+CRICKET_CARE_HINTS = settings.cricket_care_hints
 
 SENSOR_INGEST_TOKEN = settings.sensor_ingest_token
+LAN_SUBNETS = settings.lan_subnets
 
 BACKUP_RCLONE_REMOTE = settings.backup_rclone_remote
 
