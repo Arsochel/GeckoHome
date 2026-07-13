@@ -1,5 +1,7 @@
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
+from typing import NamedTuple
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -170,7 +172,187 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["status_msg_id"] = msg.message_id
 
 
-# ─── Callbacks ───
+# ─── Callbacks: диспатч-таблица ───
+#
+# Каждый маршрут — Route с единой сигнатурой адаптера (query, ctx, user_id, arg):
+# для exact-ключей arg = "", для префиксных arg = суффикс callback_data.
+# super_admin=True без deny_msg — молчаливый отказ (как в исходной простыне).
+
+
+class Route(NamedTuple):
+    handler: Callable[..., Awaitable]
+    super_admin: bool = False
+    deny_msg: str | None = None
+
+
+# — многошаговые адаптеры (лямбдой не выразить) —
+
+
+async def _route_lang_toggle(query, ctx, user_id, arg):
+    await toggle_lang(user_id)
+    await _handle_refresh(query, ctx, user_id)
+
+
+async def _route_lang_set(query, ctx, user_id, lang):
+    if lang not in ("ru", "en"):
+        return
+    await set_lang(user_id, lang)
+    text = await status_text(lang) if is_super_admin(user_id) else await user_status_text(lang)
+    kb = await main_keyboard(user_id)
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    msg = await query.message.chat.send_message(text, parse_mode="Markdown", reply_markup=kb)
+    ctx.user_data["status_msg_id"] = msg.message_id
+
+
+async def _route_timelapse_publish(query, ctx, user_id, day):
+    import os
+
+    from geckohome.services.timelapse import TIMELAPSE_VIDEOS_DIR, _send_video
+
+    path = os.path.join(TIMELAPSE_VIDEOS_DIR, f"timelapse_{day}_15fps.mp4")
+    if not os.path.exists(path):
+        await query.answer("Файл не найден", show_alert=True)
+        return
+    from geckohome.config import TELEGRAM_ADMINS
+    from geckohome.database import get_allowed_users, get_blocked_user_ids
+
+    allowed = {u["user_id"] for u in await get_allowed_users()}
+    blocked = await get_blocked_user_ids()
+    everyone = (TELEGRAM_SUPER_ADMINS | TELEGRAM_ADMINS | allowed) - {user_id} - blocked
+    await _send_video(path, f"🎬 Таймлапс {day}", everyone)
+    await query.edit_message_reply_markup(reply_markup=None)
+    await query.answer("Отправлено!")
+
+
+async def _route_stream_link(query, ctx, user_id, arg):
+    url = stream_url() or f"{STREAM_BASE_URL}/stream"
+    await query.answer()
+    await query.message.reply_text(f"📡 Стрим: {url}")
+
+
+async def _route_feeding_menu(query, ctx, user_id, arg):
+    lang = await get_lang(user_id)
+    await _safe_edit(
+        query,
+        "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
+        parse_mode="Markdown",
+        reply_markup=await feeding_keyboard(lang),
+    )
+
+
+def _count_route(handler):
+    """Адаптер для кнопок с числом в суффиксе; мусор в суффиксе игнорируется."""
+
+    async def _route(query, ctx, user_id, arg):
+        try:
+            count = int(arg)
+        except ValueError:
+            return
+        await handler(query, ctx, user_id, count)
+
+    return _route
+
+
+_DENY_LAMPS = "⛔ Only super admin can control lamps."
+_DENY_SCHEDULES = "⛔ Only super admin can manage schedules."
+
+_EXACT_ROUTES: dict[str, Route] = {
+    # навигация и язык — все допущенные
+    "back_main": Route(lambda q, c, uid, a: _handle_refresh(q, c, uid)),
+    "refresh": Route(lambda q, c, uid, a: _handle_refresh(q, c, uid)),
+    "lang_toggle": Route(_route_lang_toggle),
+    # лампы — только супер-админ, с алертом
+    "uv_on": Route(lambda q, c, uid, a: _handle_lamp(q, uid, "uv", True), True, _DENY_LAMPS),
+    "uv_off": Route(lambda q, c, uid, a: _handle_lamp(q, uid, "uv", False), True, _DENY_LAMPS),
+    "heat_on": Route(lambda q, c, uid, a: _handle_lamp(q, uid, "heat", True), True, _DENY_LAMPS),
+    "heat_off": Route(lambda q, c, uid, a: _handle_lamp(q, uid, "heat", False), True, _DENY_LAMPS),
+    # камера — все допущенные
+    "cam_snap": Route(lambda q, c, uid, a: _handle_snapshot(q, uid, c)),
+    "cam_clip": Route(lambda q, c, uid, a: _handle_clip(q, uid, 30, c)),
+    "cam_clip3": Route(lambda q, c, uid, a: _handle_clip(q, uid, 180, c)),
+    "stream_link": Route(_route_stream_link),
+    # расписания
+    "schedules": Route(lambda q, c, uid, a: _handle_schedules(q), True, _DENY_SCHEDULES),
+    "sched_new": Route(lambda q, c, uid, a: _handle_sched_new(q, c), True),
+    # питание
+    "feeding_menu": Route(_route_feeding_menu, True),
+    "calendar": Route(lambda q, c, uid, a: _handle_calendar(q), True),
+    "fed": Route(lambda q, c, uid, a: _handle_fed(q, uid, c), True),
+    "fed_hornworm": Route(
+        lambda q, c, uid, a: _handle_fed_note(
+            q, uid, "hornworm", "🐛 Бражник записан!", "🐛 Hornworm logged!"
+        ),
+        True,
+    ),
+    "fed_vitamins": Route(
+        lambda q, c, uid, a: _handle_fed_note(
+            q, uid, "vitamins", "💊 Витамины записаны!", "💊 Vitamins logged!"
+        ),
+        True,
+    ),
+    "feeding_history": Route(lambda q, c, uid, a: _handle_feeding_history(q), True),
+    "cricket_stats": Route(lambda q, c, uid, a: _handle_cricket_stats(q), True),
+    "cricket_bought": Route(lambda q, c, uid, a: _handle_cricket_bought(q, uid, c), True),
+    "cricket_out": Route(lambda q, c, uid, a: _handle_cricket_out(q, uid, c), True),
+    # алерты (кнопки в отдельном алерт-сообщении)
+    "alert_fed": Route(lambda q, c, uid, a: _handle_alert_fed(q, uid), True),
+    "alert_fed_cancel": Route(lambda q, c, uid, a: _handle_alert_fed_cancel(q), True),
+    "alert_cricket": Route(lambda q, c, uid, a: _handle_alert_cricket(q, uid), True),
+    "alert_hornworm": Route(lambda q, c, uid, a: _handle_alert_hornworm(q, uid), True),
+    "alert_vitamins": Route(lambda q, c, uid, a: _handle_alert_vitamins(q, uid), True),
+    # админка
+    "admin": Route(lambda q, c, uid, a: _handle_admin(q), True),
+    "tunnel_restart": Route(lambda q, c, uid, a: _handle_tunnel_restart(q), True),
+    "debug_link": Route(lambda q, c, uid, a: _handle_debug_link(q, uid), True),
+    "add_user": Route(lambda q, c, uid, a: _handle_add_user_prompt(q, c), True),
+}
+
+# Порядок важен: более специфичные префиксы раньше (alert_fed_count_ vs alert_fed
+# конфликта нет — exact проверяется первым, но fed_count_ и т.п. живут только тут).
+_PREFIX_ROUTES: list[tuple[str, Route]] = [
+    ("lang_set_", Route(_route_lang_set)),
+    ("timelapse_publish_", Route(_route_timelapse_publish, True)),
+    ("sched_toggle_", Route(lambda q, c, uid, a: _handle_sched_toggle(q, a), True)),
+    ("sched_del_", Route(lambda q, c, uid, a: _handle_sched_delete(q, a), True)),
+    ("snew_", Route(lambda q, c, uid, a: _handle_sched_select_lamp(q, c, a), True)),
+    ("fed_count_", Route(_count_route(lambda q, c, uid, n: _handle_fed_count(q, uid, c, n)), True)),
+    (
+        "alert_fed_count_",
+        Route(_count_route(lambda q, c, uid, n: _handle_alert_fed_count(q, uid, n)), True),
+    ),
+    (
+        "alert_cricket_count_",
+        Route(_count_route(lambda q, c, uid, n: _handle_alert_cricket_count(q, uid, n)), True),
+    ),
+    (
+        "motion_pub_",
+        Route(_count_route(lambda q, c, uid, n: _handle_motion_pub(q, c, n)), True),
+    ),
+    (
+        "motion_skip_",
+        Route(_count_route(lambda q, c, uid, n: _handle_motion_skip(q, n)), True),
+    ),
+    (
+        "rm_user_",
+        Route(_count_route(lambda q, c, uid, n: _handle_remove_user(q, n)), True),
+    ),
+]
+
+
+def _resolve_route(data: str) -> tuple[Route, str] | None:
+    """(маршрут, аргумент) для callback_data или None."""
+    route = _EXACT_ROUTES.get(data)
+    if route:
+        return route, ""
+    # у fed_count_5 exact-ключа нет, но prefix fed_count_ есть; alert_fed_count_
+    # длиннее alert_fed — конфликт исключён порядком списка
+    for prefix, route in _PREFIX_ROUTES:
+        if data.startswith(prefix):
+            return route, data.removeprefix(prefix)
+    return None
 
 
 async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -178,6 +360,8 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     data = query.data
+    if not data:  # у inline-кнопок data есть всегда, но PTB типизирует как Optional
+        return
 
     # Public
     if data == "request_access":
@@ -204,182 +388,16 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data == "noop":
         return
 
-    if data.startswith("timelapse_publish_") and is_super_admin(user_id):
-        day = data.removeprefix("timelapse_publish_")
-        import os
-
-        from geckohome.services.timelapse import TIMELAPSE_VIDEOS_DIR, _send_video
-
-        path = os.path.join(TIMELAPSE_VIDEOS_DIR, f"timelapse_{day}_15fps.mp4")
-        if not os.path.exists(path):
-            await query.answer("Файл не найден", show_alert=True)
-            return
-        from geckohome.config import TELEGRAM_ADMINS
-        from geckohome.database import get_allowed_users, get_blocked_user_ids
-
-        allowed = {u["user_id"] for u in await get_allowed_users()}
-        blocked = await get_blocked_user_ids()
-        everyone = (TELEGRAM_SUPER_ADMINS | TELEGRAM_ADMINS | allowed) - {user_id} - blocked
-        await _send_video(path, f"🎬 Таймлапс {day}", everyone)
-        await query.edit_message_reply_markup(reply_markup=None)
-        await query.answer("Отправлено!")
+    resolved = _resolve_route(data)
+    if resolved is None:
+        log.debug("unknown callback: %s", data)
         return
-
-    if data == "lang_toggle":
-        await toggle_lang(user_id)
-        return await _handle_refresh(query, ctx, user_id)
-
-    if data in ("lang_set_ru", "lang_set_en"):
-        lang = data.replace("lang_set_", "")
-        await set_lang(user_id, lang)
-        text = await status_text(lang) if is_super_admin(user_id) else await user_status_text(lang)
-        kb = await main_keyboard(user_id)
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
-        msg = await query.message.chat.send_message(text, parse_mode="Markdown", reply_markup=kb)
-        ctx.user_data["status_msg_id"] = msg.message_id
+    route, arg = resolved
+    if route.super_admin and not is_super_admin(user_id):
+        if route.deny_msg:
+            await query.answer(route.deny_msg, show_alert=True)
         return
-
-    # Navigation
-    if data in ("back_main", "refresh"):
-        return await _handle_refresh(query, ctx, user_id)
-
-    # Lamps
-    # Lamps — super admin only
-    action_map = {
-        "uv_on": ("uv", True),
-        "uv_off": ("uv", False),
-        "heat_on": ("heat", True),
-        "heat_off": ("heat", False),
-    }
-    if data in action_map:
-        if not is_super_admin(user_id):
-            await query.answer("⛔ Only super admin can control lamps.", show_alert=True)
-            return
-        return await _handle_lamp(query, user_id, *action_map[data])
-
-    # Camera — all allowed users
-    if data == "cam_snap":
-        return await _handle_snapshot(query, user_id, ctx)
-    if data == "cam_clip":
-        return await _handle_clip(query, user_id, 30, ctx)
-    if data == "cam_clip3":
-        return await _handle_clip(query, user_id, 180, ctx)
-
-    # Schedules — super admin only
-    if data == "schedules":
-        if not is_super_admin(user_id):
-            await query.answer("⛔ Only super admin can manage schedules.", show_alert=True)
-            return
-        return await _handle_schedules(query)
-    if data.startswith("sched_toggle_"):
-        if not is_super_admin(user_id):
-            return
-        return await _handle_sched_toggle(query, data.replace("sched_toggle_", ""))
-    if data.startswith("sched_del_"):
-        if not is_super_admin(user_id):
-            return
-        return await _handle_sched_delete(query, data.replace("sched_del_", ""))
-    if data == "sched_new":
-        if not is_super_admin(user_id):
-            return
-        return await _handle_sched_new(query, ctx)
-    if data.startswith("snew_"):
-        if not is_super_admin(user_id):
-            return
-        return await _handle_sched_select_lamp(query, ctx, data.replace("snew_", ""))
-
-    # Stream
-    if data == "stream_link":
-        url = stream_url() or f"{STREAM_BASE_URL}/stream"
-        await query.answer()
-        await query.message.reply_text(f"📡 Стрим: {url}")
-        return
-
-    # Feeding menu
-    if data == "feeding_menu" and is_super_admin(user_id):
-        lang = await get_lang(user_id)
-        await _safe_edit(
-            query,
-            "🍎 *Питание*" if lang == "ru" else "🍎 *Feeding*",
-            parse_mode="Markdown",
-            reply_markup=await feeding_keyboard(lang),
-        )
-        return
-
-    # Calendar
-    if data == "calendar" and is_super_admin(user_id):
-        return await _handle_calendar(query)
-
-    # Feeding
-    if data == "fed" and is_super_admin(user_id):
-        return await _handle_fed(query, user_id, ctx)
-    if data.startswith("fed_count_") and is_super_admin(user_id):
-        try:
-            count = int(data.split("_")[-1])
-        except ValueError:
-            return
-        return await _handle_fed_count(query, user_id, ctx, count)
-    if data == "fed_hornworm" and is_super_admin(user_id):
-        return await _handle_fed_note(
-            query, user_id, "hornworm", "🐛 Бражник записан!", "🐛 Hornworm logged!"
-        )
-    if data == "fed_vitamins" and is_super_admin(user_id):
-        return await _handle_fed_note(
-            query, user_id, "vitamins", "💊 Витамины записаны!", "💊 Vitamins logged!"
-        )
-    if data == "feeding_history" and is_super_admin(user_id):
-        return await _handle_feeding_history(query)
-    if data == "cricket_stats" and is_super_admin(user_id):
-        return await _handle_cricket_stats(query)
-    if data == "cricket_bought" and is_super_admin(user_id):
-        return await _handle_cricket_bought(query, user_id, ctx)
-    if data == "cricket_out" and is_super_admin(user_id):
-        return await _handle_cricket_out(query, user_id, ctx)
-
-    # Alert buttons (из отдельного алерт-сообщения)
-    if data == "alert_fed" and is_super_admin(user_id):
-        return await _handle_alert_fed(query, user_id)
-    if data.startswith("alert_fed_count_") and is_super_admin(user_id):
-        try:
-            count = int(data.split("_")[-1])
-        except ValueError:
-            return
-        return await _handle_alert_fed_count(query, user_id, count)
-    if data == "alert_fed_cancel" and is_super_admin(user_id):
-        return await _handle_alert_fed_cancel(query)
-    if data == "alert_cricket" and is_super_admin(user_id):
-        return await _handle_alert_cricket(query, user_id)
-    if data.startswith("alert_cricket_count_") and is_super_admin(user_id):
-        try:
-            count = int(data.split("_")[-1])
-        except ValueError:
-            return
-        return await _handle_alert_cricket_count(query, user_id, count)
-    if data == "alert_hornworm" and is_super_admin(user_id):
-        return await _handle_alert_hornworm(query, user_id)
-    if data == "alert_vitamins" and is_super_admin(user_id):
-        return await _handle_alert_vitamins(query, user_id)
-
-    # Motion approval
-    if data.startswith("motion_pub_") and is_super_admin(user_id):
-        return await _handle_motion_pub(query, ctx, int(data.replace("motion_pub_", "")))
-    if data.startswith("motion_skip_") and is_super_admin(user_id):
-        return await _handle_motion_skip(query, int(data.replace("motion_skip_", "")))
-
-    # Admin
-    if data == "admin" and is_super_admin(user_id):
-        return await _handle_admin(query)
-    if data == "tunnel_restart" and is_super_admin(user_id):
-        return await _handle_tunnel_restart(query)
-    if data == "debug_link" and is_super_admin(user_id):
-        return await _handle_debug_link(query, user_id)
-    if data == "add_user" and is_super_admin(user_id):
-        return await _handle_add_user_prompt(query, ctx)
-    if data.startswith("rm_user_") and is_super_admin(user_id):
-        return await _handle_remove_user(query, int(data.replace("rm_user_", "")))
+    await route.handler(query, ctx, user_id, arg)
 
 
 async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
