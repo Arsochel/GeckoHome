@@ -10,10 +10,34 @@ from geckohome.services.scheduler.notify import _send_alert
 
 log = logging.getLogger(__name__)
 
+# Подряд идущие фейлы переключения по лампам — для алерта «лампа не отвечает».
+# Реальный кейс: роутер сменил подсеть, off не доходит, свет жарит всю ночь,
+# а в lamp_events при этом писались фантомные 'off' и никто не был в курсе.
+_switch_failures: dict[str, int] = {}
+_FAILURE_ALERT_THRESHOLD = 3
+
+
+async def _switch_and_log(lamp_type: str, on: bool, source: str) -> bool:
+    """Переключает лампу; событие пишется ТОЛЬКО при успехе, фейлы копятся до алерта."""
+    ok = await asyncio.to_thread(tuya.switch_lamp, lamp_type, on)
+    if ok:
+        _switch_failures[lamp_type] = 0
+        await log_lamp_event(lamp_type, "on" if on else "off", source)
+        return True
+    _switch_failures[lamp_type] = _switch_failures.get(lamp_type, 0) + 1
+    fails = _switch_failures[lamp_type]
+    log.warning("%s: switch %s %s FAILED (%d in a row)", source, lamp_type, on, fails)
+    if fails >= _FAILURE_ALERT_THRESHOLD:
+        action = "включить" if on else "выключить"
+        await _send_alert(
+            f"⚠️ *Лампа {lamp_type.upper()} не отвечает* — не могу {action} "
+            f"({fails} попыток подряд). Проверь розетку и сеть руками!"
+        )
+    return False
+
 
 async def lamp_schedule(lamp_type: str, duration_h: float):
-    await asyncio.to_thread(tuya.switch_lamp, lamp_type, True)
-    await log_lamp_event(lamp_type, "on", "scheduler")
+    await _switch_and_log(lamp_type, True, "scheduler")
     # Выключение — через sync_lamp_schedules каждые 15 мин (не sleep, чтобы не было проблем с прерыванием)
 
 
@@ -44,8 +68,7 @@ async def _lamp_off_after(lamp_type: str, seconds: float):
     """Вспомогательная: ждёт seconds секунд и выключает лампу."""
     log.info("recovery: will turn off %s in %.0fs", lamp_type, seconds)
     await asyncio.sleep(seconds)
-    await asyncio.to_thread(tuya.switch_lamp, lamp_type, False)
-    await log_lamp_event(lamp_type, "off", "scheduler:recovery")
+    await _switch_and_log(lamp_type, False, "scheduler:recovery")
     log.info("recovery: turned off %s", lamp_type)
 
 
@@ -79,12 +102,10 @@ async def sync_lamp_schedules():
                 )
                 continue
             log.info("sync_lamps: %s should be ON (schedule), turning on", lamp)
-            await asyncio.to_thread(tuya.switch_lamp, lamp, True)
-            await log_lamp_event(lamp, "on", "sync")
+            await _switch_and_log(lamp, True, "sync")
         elif not should_be_on and currently_on:
             log.info("sync_lamps: %s should be OFF (outside window), turning off", lamp)
-            await asyncio.to_thread(tuya.switch_lamp, lamp, False)
-            await log_lamp_event(lamp, "off", "sync")
+            await _switch_and_log(lamp, False, "sync")
 
 
 async def check_lamp_temperature():
@@ -115,18 +136,16 @@ async def check_lamp_temperature():
 
         if temp_c > 34 and currently_on:
             log.warning("temp_guard: %.1f°C > 34 — выключаю %s лампу", temp_c, lamp)
-            await asyncio.to_thread(tuya.switch_lamp, lamp, False)
-            await log_lamp_event(lamp, "off", "temp_guard")
-            await _send_alert(
-                f"🌡 *Перегрев {temp_c:.1f}°C* — автоматически выключена {lamp.upper()} лампа"
-            )
+            if await _switch_and_log(lamp, False, "temp_guard"):
+                await _send_alert(
+                    f"🌡 *Перегрев {temp_c:.1f}°C* — автоматически выключена {lamp.upper()} лампа"
+                )
         elif temp_c <= 30 and not currently_on:
             log.info("temp_guard: %.1f°C ≤ 30 — включаю %s лампу", temp_c, lamp)
-            await asyncio.to_thread(tuya.switch_lamp, lamp, True)
-            await log_lamp_event(lamp, "on", "temp_guard")
-            await _send_alert(
-                f"🌡 *Остыло до {temp_c:.1f}°C* — автоматически включена {lamp.upper()} лампа"
-            )
+            if await _switch_and_log(lamp, True, "temp_guard"):
+                await _send_alert(
+                    f"🌡 *Остыло до {temp_c:.1f}°C* — автоматически включена {lamp.upper()} лампа"
+                )
 
 
 async def _recover_lamps(schedules: list[dict]):
@@ -146,11 +165,9 @@ async def _recover_lamps(schedules: list[dict]):
             remaining = lamps_in_window[lamp]
             if not currently_on:
                 log.info("recovery: turning on %s lamp (inside schedule window, was off)", lamp)
-                tuya.switch_lamp(lamp, True)
-                await log_lamp_event(lamp, "on", "scheduler:recovery")
+                await _switch_and_log(lamp, True, "scheduler:recovery")
             log.info("recovery: %s lamp is in window, scheduling off in %.0fs", lamp, remaining)
             asyncio.create_task(_lamp_off_after(lamp, remaining))
         elif currently_on:
             log.info("recovery: turning off %s lamp (outside schedule window)", lamp)
-            tuya.switch_lamp(lamp, False)
-            await log_lamp_event(lamp, "off", "scheduler:recovery")
+            await _switch_and_log(lamp, False, "scheduler:recovery")
