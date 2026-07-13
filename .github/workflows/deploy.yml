@@ -8,8 +8,37 @@ env:
   PROJECT_DIR: ${{ vars.PROJECT_DIR }}
 
 jobs:
+  # Пуш в main деплоится автоматически — без этого гейта сломанный код
+  # уезжал бы в прод, не встретив ни одного теста (CI бегает только на ветках).
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: System libraries for OpenCV / ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1 libglib2.0-0 ffmpeg
+      - name: Install CPU torch
+        run: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+      - name: Install project + dev deps
+        run: |
+          pip install -r requirements.txt
+          pip install -e ".[dev]"
+          pip install ruff==0.15.17  # pinned: `format --check` must match local runs
+      - name: Ruff
+        run: |
+          ruff check src tests
+          ruff format --check src tests
+      - name: Mypy
+        run: mypy src/geckohome
+      - name: Pytest
+        run: pytest
+
   deploy:
     runs-on: self-hosted
+    needs: test
     steps:
       - name: Pull latest code
         run: |
