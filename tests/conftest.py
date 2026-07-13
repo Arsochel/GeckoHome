@@ -26,7 +26,8 @@ async def fresh_db():
     """Give every test an empty, freshly-migrated pair of SQLite databases."""
     root = pathlib.Path(paths.PROJECT_ROOT)
     for name in ("gecko.db", "gecko_media.db"):
-        (root / name).unlink(missing_ok=True)
+        for suffix in ("", "-wal", "-shm"):  # WAL-сателлиты тоже сносим
+            (root / f"{name}{suffix}").unlink(missing_ok=True)
     await init_db()
     await _init_media_db()
     yield

@@ -23,6 +23,7 @@ _KEEP_MEDIA_BACKUPS = 2
 def _backup_one(src_path: str, prefix: str, keep: int, stamp: str):
     dest = os.path.join(_BACKUP_DIR, f"{prefix}_{stamp}.db")
     src = sqlite3.connect(src_path)
+    src.execute("PRAGMA busy_timeout=5000")  # база живая, WAL — не ждать locked
     dst = sqlite3.connect(dest)
     try:
         src.backup(dst)
