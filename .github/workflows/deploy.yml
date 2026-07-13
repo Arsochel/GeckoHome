@@ -51,7 +51,9 @@ jobs:
 
       - name: Deploy with Docker Compose
         timeout-minutes: 20
+        # Docker Desktop на Windows-хосте; WSL Ubuntu на машине больше нет
         run: |
           $dir = "$env:PROJECT_DIR".Trim()
-          $wslDir = "/mnt/" + ($dir[0].ToString().ToLower()) + "/" + ($dir.Substring(3) -replace '\\', '/')
-          wsl -d Ubuntu -u root -- bash -c "service docker start; cd $wslDir && docker compose up --build -d"
+          Set-Location $dir
+          docker compose up --build -d
+          docker compose ps
