@@ -79,6 +79,10 @@ async def init_db():
                 seconds INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (day, zone)
             );
+            CREATE TABLE IF NOT EXISTS gecko_profile (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            );
         """)
 
         # schedules migrations
