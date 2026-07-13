@@ -33,6 +33,7 @@ from geckohome.database.gecko import (
     get_gecko_birthday,
     get_gecko_state,
     get_gecko_zone,
+    get_zone_daily,
     log_gecko_zone,
     set_gecko_state,
 )
@@ -137,6 +138,7 @@ __all__ = [
     "get_schedules",
     "get_sensor_history",
     "get_user_lang",
+    "get_zone_daily",
     "has_pending_request",
     "init_db",
     "is_user_allowed",

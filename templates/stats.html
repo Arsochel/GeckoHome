@@ -146,6 +146,26 @@
         <div id="motion-empty" class="no-data" style="display:none">Нет данных о движении</div>
     </div>
 
+    <!-- Zone time -->
+    <div class="chart-section">
+        <div class="title">Где живёт геккон</div>
+        <div class="chart-range-btns" id="zones-range">
+            <button class="chart-range-btn active" onclick="loadZonesChart(this,14)">14д</button>
+            <button class="chart-range-btn" onclick="loadZonesChart(this,30)">30д</button>
+            <button class="chart-range-btn" onclick="loadZonesChart(this,90)">90д</button>
+        </div>
+    </div>
+    <div class="card no-hover chart-wrap" style="padding-bottom:20px">
+        <canvas id="zones-chart" height="150"></canvas>
+        <div id="zones-empty" class="no-data" style="display:none">Нет данных по зонам — нужна YOLO-детекция</div>
+        <div class="legend" id="zones-legend" style="display:none">
+            <div class="legend-item"><div class="legend-dot" style="background:rgba(139,92,246,0.7)"></div> 💀 Череп</div>
+            <div class="legend-item"><div class="legend-dot" style="background:rgba(56,189,248,0.7)"></div> 💧 Поилка</div>
+            <div class="legend-item"><div class="legend-dot" style="background:rgba(249,115,22,0.7)"></div> ♨️ Баня</div>
+            <div class="legend-item"><div class="legend-dot" style="background:rgba(34,197,94,0.55)"></div> 🏃 Прогулки</div>
+        </div>
+    </div>
+
 </div>
 
 <script>
@@ -492,6 +512,80 @@ async function loadMotionChart() {
     });
 }
 
+// ── Zone time stacked bars ────────────────────────────────────────────────────
+const ZONE_BUCKETS = {
+    skull: { label: '💀 Череп',   color: 'rgba(139,92,246,0.7)' },
+    water: { label: '💧 Поилка',  color: 'rgba(56,189,248,0.7)' },
+    sauna: { label: '♨️ Баня',    color: 'rgba(249,115,22,0.7)' },
+    other: { label: '🏃 Прогулки', color: 'rgba(34,197,94,0.55)' },
+};
+let _zonesChart = null;
+
+async function loadZonesChart(btn, days) {
+    if (btn) {
+        document.querySelectorAll('#zones-range .chart-range-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+    }
+
+    const rows   = await fetch(`/api/stats/zones?days=${days}`).then(r => r.json());
+    const canvas = document.getElementById('zones-chart');
+    const empty  = document.getElementById('zones-empty');
+    const legend = document.getElementById('zones-legend');
+
+    if (!rows.length) {
+        canvas.style.display = 'none';
+        empty.style.display  = '';
+        return;
+    }
+    canvas.style.display = '';
+    empty.style.display  = 'none';
+    legend.style.display = 'flex';
+
+    // день → { skull/water/sauna/other: минуты }; направления от черепа = прогулки
+    const byDay = new Map();
+    for (const r of rows) {
+        const bucket = ZONE_BUCKETS[r.zone] ? r.zone : 'other';
+        if (!byDay.has(r.day)) byDay.set(r.day, { skull: 0, water: 0, sauna: 0, other: 0 });
+        byDay.get(r.day)[bucket] += r.seconds / 60;
+    }
+    const labels = [...byDay.keys()];
+    const datasets = Object.entries(ZONE_BUCKETS).map(([key, z]) => ({
+        label: z.label,
+        data: labels.map(d => Math.round(byDay.get(d)[key])),
+        backgroundColor: z.color,
+        borderRadius: 2,
+    }));
+
+    if (_zonesChart) _zonesChart.destroy();
+    _zonesChart = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: { labels: labels.map(fmtDateShort), datasets },
+        options: {
+            responsive: true,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    ...TOOLTIP,
+                    callbacks: {
+                        title: i => labels[i[0].dataIndex],
+                        label: i => `${i.dataset.label}: ${fmtMinutes(i.parsed.y)}`,
+                    },
+                },
+            },
+            scales: {
+                x: { ...SCALE_NO_GRID, stacked: true, ticks: { ...SCALE.ticks, maxRotation: 45, maxTicksLimit: 20 } },
+                y: { ...SCALE, stacked: true, beginAtZero: true, ticks: { ...SCALE.ticks, callback: v => fmtMinutes(v) } },
+            },
+        },
+    });
+}
+
+function fmtMinutes(mins) {
+    if (mins >= 60) return `${Math.floor(mins / 60)}ч ${Math.round(mins % 60)}м`;
+    return `${Math.round(mins)}м`;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtDate(iso) {
     const d = new Date(iso + 'T00:00:00');
@@ -508,6 +602,7 @@ loadFeedingsChart();
 loadCricketChart();
 loadTemp(null, 24);
 loadMotionChart();
+loadZonesChart(null, 14);
 lucide.createIcons();
 </script>
 

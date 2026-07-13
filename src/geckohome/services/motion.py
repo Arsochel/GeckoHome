@@ -368,7 +368,7 @@ class MotionMonitor:
                                 conf = float(box.conf[0])
                                 cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
                                 zone = detect_zone(cx, cy)
-                                self._submit(log_gecko_zone(zone, conf))
+                                self._submit(log_gecko_zone(zone, conf, seconds=YOLO_INTERVAL))
                         except Exception as e:
                             log.error("YOLO error: %s", e)
 

@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from geckohome import paths
-from geckohome.database import DB_PATH, get_cricket_remaining
+from geckohome.database import DB_PATH, get_cricket_remaining, get_zone_daily
 from geckohome.web.routers.auth import get_current_user
 
 router = APIRouter()
@@ -161,6 +161,12 @@ async def stats_cricket(_=_auth):
         current_day += timedelta(days=1)
 
     return result
+
+
+@router.get("/api/stats/zones")
+async def stats_zones(days: int = 30, _=_auth):
+    """Дневные агрегаты времени по зонам (пишутся YOLO-детекцией)."""
+    return await get_zone_daily(min(days, 365))
 
 
 @router.get("/api/stats/motion")

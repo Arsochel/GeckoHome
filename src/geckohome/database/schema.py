@@ -73,6 +73,12 @@ async def init_db():
                 message_id INTEGER NOT NULL,
                 PRIMARY KEY (user_id, alert_type)
             );
+            CREATE TABLE IF NOT EXISTS gecko_zone_daily (
+                day     TEXT NOT NULL,
+                zone    TEXT NOT NULL,
+                seconds INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (day, zone)
+            );
         """)
 
         # schedules migrations
