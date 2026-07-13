@@ -103,6 +103,12 @@ def test_web_session_needs_no_token(client):
     assert r.status_code == 200
 
 
+def test_healthz_is_public(client):
+    r = client.get("/healthz")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+
+
 def test_token_ttl_is_reasonable():
     token = st.issue_stream_token()
     expires = int(token.split(".")[0])

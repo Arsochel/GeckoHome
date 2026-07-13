@@ -13,6 +13,15 @@ services:
       YOLO_MODEL_PATH: /app/models/gecko_yolo.pt
       TZ: Europe/Moscow
     restart: unless-stopped
+    healthcheck:
+      # curl в python:slim нет — проверяем стандартной библиотекой
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      autoheal: "true"
 
   bot:
     build: .
@@ -27,4 +36,15 @@ services:
       APP_INTERNAL_URL: http://app:8000
     restart: unless-stopped
     depends_on:
-      - app
+      app:
+        condition: service_healthy
+
+  # docker не перезапускает unhealthy-контейнеры сам — autoheal делает это
+  # за него (следит за контейнерами с label autoheal=true)
+  autoheal:
+    image: willfarrell/autoheal:latest
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

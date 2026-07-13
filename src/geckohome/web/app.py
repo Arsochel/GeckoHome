@@ -86,6 +86,13 @@ async def favicon():
     return FileResponse(paths.FAVICON_PATH, media_type="image/x-icon")
 
 
+@app.get("/healthz", include_in_schema=False)
+async def healthz():
+    """Liveness для docker healthcheck: процесс жив и event loop не задедлочен.
+    Без авторизации — отдаёт только ok, никаких данных."""
+    return {"ok": True}
+
+
 def _require_stream_access(request: Request, t: str = ""):
     """Стрим доступен по веб-сессии ИЛИ по подписанному токену из бота.
 
