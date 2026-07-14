@@ -17,11 +17,24 @@ async def set_gecko_state(state: str):
         )
 
 
-async def get_gecko_birthday() -> str | None:
+async def get_profile_value(key: str) -> str | None:
     async with _db() as db:
-        async with db.execute("SELECT value FROM gecko_profile WHERE key='birthday'") as cur:
+        async with db.execute("SELECT value FROM gecko_profile WHERE key = ?", (key,)) as cur:
             row = await cur.fetchone()
             return row["value"] if row else None
+
+
+async def set_profile_value(key: str, value: str):
+    async with _db(write=True) as db:
+        await db.execute(
+            "INSERT INTO gecko_profile (key, value) VALUES (?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+
+async def get_gecko_birthday() -> str | None:
+    return await get_profile_value("birthday")
 
 
 async def get_gecko_state() -> tuple[str | None, datetime | None]:

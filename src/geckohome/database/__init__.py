@@ -33,9 +33,11 @@ from geckohome.database.gecko import (
     get_gecko_birthday,
     get_gecko_state,
     get_gecko_zone,
+    get_profile_value,
     get_zone_daily,
     log_gecko_zone,
     set_gecko_state,
+    set_profile_value,
 )
 from geckohome.database.lamps import (
     get_last_lamp_states,
@@ -133,6 +135,7 @@ __all__ = [
     "get_next_feeding_supplements",
     "get_photo_data",
     "get_photos",
+    "get_profile_value",
     "get_recent_motion_events",
     # schedules
     "get_schedules",
@@ -165,6 +168,7 @@ __all__ = [
     "save_schedule",
     # gecko
     "set_gecko_state",
+    "set_profile_value",
     "set_schedule_paused",
     "set_user_blocked",
     "set_user_lang",

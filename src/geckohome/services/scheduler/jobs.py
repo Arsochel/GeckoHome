@@ -16,6 +16,7 @@ from geckohome.services import camera, tuya
 from geckohome.services.highlights import update_gecko_state
 from geckohome.services.scheduler._core import scheduler
 from geckohome.services.scheduler.backup import backup_db
+from geckohome.services.scheduler.digest import send_weekly_digest
 from geckohome.services.scheduler.feeding import (
     check_birthday,
     check_cricket_alert,
@@ -27,6 +28,7 @@ from geckohome.services.scheduler.lamps import (
     lamp_schedule,
     sync_lamp_schedules,
 )
+from geckohome.services.scheduler.maintenance import check_uvb_age
 from geckohome.services.scheduler.sensors import record_sensor_readings
 from geckohome.services.timelapse import (
     capture_timelapse_frame,
@@ -84,6 +86,10 @@ async def load_schedules():
     )
     scheduler.add_job(purge_expired_debug_tokens, "cron", hour=4, minute=0, id="purge_debug_tokens")
     scheduler.add_job(check_birthday, "cron", hour=10, minute=0, id="birthday_check")
+    scheduler.add_job(check_uvb_age, "cron", hour=11, minute=0, id="uvb_age_check")
+    scheduler.add_job(
+        send_weekly_digest, "cron", day_of_week="sun", hour=20, minute=0, id="weekly_digest"
+    )
     if camera.is_configured():
         scheduler.add_job(
             camera.ensure_alive,

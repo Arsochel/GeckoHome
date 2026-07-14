@@ -233,6 +233,7 @@ async def admin_keyboard() -> InlineKeyboardMarkup:
             )
 
     rows.append([InlineKeyboardButton("➕ Добавить по ID", callback_data="add_user")])
+    rows.append([InlineKeyboardButton("🔆 Заменил UVB-лампу", callback_data="alert_uvb_replaced")])
     rows.append([InlineKeyboardButton("🔄 Перезапустить туннель", callback_data="tunnel_restart")])
     rows.append([InlineKeyboardButton("◀ Назад", callback_data="back_main")])
     return InlineKeyboardMarkup(rows)

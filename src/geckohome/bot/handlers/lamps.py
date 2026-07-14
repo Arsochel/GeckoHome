@@ -26,6 +26,24 @@ async def _handle_refresh(query, ctx, user_id):
         pass
 
 
+async def _handle_uvb_replaced(query, user_id):
+    """Отметка «заменил UVB-трубку»: сбрасывает счётчик возраста и алерт."""
+    from datetime import date
+
+    from geckohome.database import delete_alert_message, get_alert_message, set_profile_value
+
+    await set_profile_value("uvb_installed_at", date.today().isoformat())
+    await query.answer("🔆 Записано! Отсчёт возраста лампы пошёл заново.", show_alert=True)
+    # если нажато из алерт-сообщения — убираем его
+    stored = await get_alert_message(user_id, "uvb")
+    if stored and query.message and stored == query.message.message_id:
+        await delete_alert_message(user_id, "uvb")
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+
 async def _handle_lamp(query, user_id, lamp, on):
     ok = await asyncio.to_thread(tuya.switch_lamp, lamp, on)
     word = "ON" if on else "OFF"

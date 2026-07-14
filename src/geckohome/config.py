@@ -90,6 +90,11 @@ class Settings(BaseSettings):
     # насекомые замороженные и кормить их не нужно.
     cricket_care_hints: bool = True
 
+    # ── UVB lamp aging ────────────────────────────────────────────────────────────
+    # UVB-выход трубки падает за 6-12 мес, даже если она светит. Напоминание
+    # о замене через столько месяцев после отметки «заменил лампу».
+    uvb_replace_months: int = 6
+
     # ── Local sensor ingest (cloud-free readings pushed from any LAN source) ─────
     sensor_ingest_token: str = ""
 
@@ -190,6 +195,7 @@ HUM_ALERT_MAX = settings.hum_alert_max
 
 FEEDING_ALERT_DAYS = settings.feeding_alert_days
 CRICKET_CARE_HINTS = settings.cricket_care_hints
+UVB_REPLACE_MONTHS = settings.uvb_replace_months
 
 SENSOR_INGEST_TOKEN = settings.sensor_ingest_token
 LAN_SUBNETS = settings.lan_subnets

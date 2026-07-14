@@ -62,6 +62,7 @@ from geckohome.bot.handlers.lamps import (
     _handle_lamp,
     _handle_refresh,
     _handle_tunnel_restart,
+    _handle_uvb_replaced,
 )
 from geckohome.bot.handlers.media import (
     _handle_clip,
@@ -303,6 +304,7 @@ _EXACT_ROUTES: dict[str, Route] = {
     "alert_cricket": Route(lambda q, c, uid, a: _handle_alert_cricket(q, uid), True),
     "alert_hornworm": Route(lambda q, c, uid, a: _handle_alert_hornworm(q, uid), True),
     "alert_vitamins": Route(lambda q, c, uid, a: _handle_alert_vitamins(q, uid), True),
+    "alert_uvb_replaced": Route(lambda q, c, uid, a: _handle_uvb_replaced(q, uid), True),
     # админка
     "admin": Route(lambda q, c, uid, a: _handle_admin(q), True),
     "tunnel_restart": Route(lambda q, c, uid, a: _handle_tunnel_restart(q), True),
