@@ -50,10 +50,22 @@ jobs:
           & $gitCmd pull origin main
 
       - name: Deploy with Docker Compose
-        timeout-minutes: 20
-        # Docker Desktop на Windows-хосте; WSL Ubuntu на машине больше нет
+        timeout-minutes: 30
+        # Docker Desktop на Windows-хосте; WSL Ubuntu на машине больше нет.
+        # Явные проверки $LASTEXITCODE обязательны: PowerShell-степ возвращает
+        # код ПОСЛЕДНЕЙ команды, и упавший build однажды прошёл незамеченным.
+        # --force-recreate обязателен: код попадает в контейнер bind-mount'ом,
+        # и без пересоздания процессы продолжают крутить старую версию.
         run: |
           $dir = "$env:PROJECT_DIR".Trim()
           Set-Location $dir
-          docker compose up --build -d
+          docker compose build
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "build failed — retrying once in 30s (transient network?)"
+            Start-Sleep -Seconds 30
+            docker compose build
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+          docker compose up -d --force-recreate
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           docker compose ps
