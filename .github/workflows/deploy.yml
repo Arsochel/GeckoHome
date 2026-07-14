@@ -59,9 +59,10 @@ jobs:
         run: |
           $dir = "$env:PROJECT_DIR".Trim()
           Set-Location $dir
+          # ASCII only in this script: the runner parses it as Windows-1251
           docker compose build
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "build failed — retrying once in 30s (transient network?)"
+            Write-Host "build failed, retrying once in 30s (transient network?)"
             Start-Sleep -Seconds 30
             docker compose build
             if ($LASTEXITCODE -ne 0) { exit 1 }
