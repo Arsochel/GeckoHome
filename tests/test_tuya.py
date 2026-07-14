@@ -19,6 +19,7 @@ def fresh_caches(monkeypatch):
     monkeypatch.setattr(tuya, "_discovered_ips", {})
     monkeypatch.setattr(tuya, "_last_rediscover", 0.0)
     monkeypatch.setattr(tuya, "_rediscover_running", False)
+    monkeypatch.setattr(tuya, "_cloud_dead_until", 0.0)
 
 
 class FakeOutlet:
@@ -158,6 +159,50 @@ def test_sensor_all_sources_dead(monkeypatch):
     monkeypatch.setattr(tuya, "_device", lambda t: None)
     monkeypatch.setattr(tuya, "_get_sensor_cloud", lambda d, c: None)
     assert tuya.get_sensor("thermometer", "va_temperature") is None
+
+
+# ── negative-кэши: офлайн-железо не должно тормозить бота ──
+
+
+def test_offline_lamp_cached_longer(monkeypatch):
+    outlet = FakeOutlet(raises=True)
+    monkeypatch.setattr(tuya, "_outlet", lambda t: outlet)
+
+    tuya.get_lamp_status("uv")
+    assert outlet.status_calls == 1
+    # 20с прошло: онлайн-TTL (15с) истёк, но офлайн-TTL (60с) держит кэш
+    tuya._lamp_cache["uv"]["ts"] = time.time() - 20
+    tuya.get_lamp_status("uv")
+    assert outlet.status_calls == 1  # повторного похода в сеть нет
+
+
+def test_sensor_none_is_negative_cached(monkeypatch):
+    calls = []
+
+    def fake_device(t):
+        calls.append(t)
+        return None
+
+    monkeypatch.setattr(tuya, "_device", fake_device)
+    monkeypatch.setattr(tuya, "_get_sensor_cloud", lambda d, c: None)
+
+    assert tuya.get_sensor("thermometer", "va_temperature") is None
+    assert tuya.get_sensor("thermometer", "va_temperature") is None
+    assert len(calls) == 1  # второй раз ответ из negative-кэша
+
+
+def test_cloud_failure_disables_cloud_temporarily(monkeypatch):
+    calls = []
+
+    class _FailingCloud:
+        def cloudrequest(self, url):
+            calls.append(url)
+            return {"success": False, "msg": "IoT Core service subscription has expired."}
+
+    monkeypatch.setattr(tuya, "_get_cloud", lambda: _FailingCloud())
+    assert tuya._get_sensor_cloud("dev123", "va_temperature") is None
+    assert tuya._get_sensor_cloud("dev123", "va_temperature") is None
+    assert len(calls) == 1  # второй вызов даже не пошёл в облако
 
 
 # ── _get_sensor_cloud ──

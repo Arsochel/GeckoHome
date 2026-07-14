@@ -19,9 +19,13 @@ _lamp_cache: dict[
     str, dict
 ] = {}  # lamp_type → {"switch": bool|None, "online": bool|None, "ts": float}
 _LAMP_CACHE_TTL = 15  # seconds
+# Офлайн-устройство кэшируем дольше: каждый промах — это секунды TCP-таймаутов,
+# и меню бота начинает отвечать по 5-10 секунд.
+_LAMP_OFFLINE_TTL = 60  # seconds
 
 _sensor_value_cache: dict[str, dict] = {}  # "sensor_type:code" → {"value": any, "ts": float}
 _SENSOR_CACHE_TTL = 120  # seconds
+_SENSOR_NEGATIVE_TTL = 60  # seconds — кэш «данных нет», чтобы не долбить таймауты
 
 log = logging.getLogger(__name__)
 
@@ -401,8 +405,10 @@ def _device(device_type: str):
 
 def get_lamp_status(lamp_type: str) -> dict:
     cached = _lamp_cache.get(lamp_type)
-    if cached and time.time() - cached["ts"] < _LAMP_CACHE_TTL:
-        return {"online": cached["online"], "switch": cached["switch"]}
+    if cached:
+        ttl = _LAMP_CACHE_TTL if cached["online"] else _LAMP_OFFLINE_TTL
+        if time.time() - cached["ts"] < ttl:
+            return {"online": cached["online"], "switch": cached["switch"]}
     last_switch = cached.get("switch") if cached else None
     d = _outlet(f"{lamp_type}_lamp")
     if not d:
@@ -431,9 +437,16 @@ _CLOUD_CODES = {
 }
 
 
+_cloud_dead_until = 0.0
+_CLOUD_DEAD_TTL = 600  # секунд не дёргать облако после ошибки (напр. истёкшая подписка)
+
+
 def _get_sensor_cloud(device_id: str, code: str):
     import socket
 
+    global _cloud_dead_until
+    if time.time() < _cloud_dead_until:
+        return None
     cloud = _get_cloud()
     if not cloud or not device_id:
         return None
@@ -445,22 +458,30 @@ def _get_sensor_cloud(device_id: str, code: str):
         finally:
             socket.setdefaulttimeout(old_timeout)
         if not r.get("success"):
+            _cloud_dead_until = time.time() + _CLOUD_DEAD_TTL
+            log.warning(
+                "cloud request failed (%s) — skipping cloud for %ds", r.get("msg"), _CLOUD_DEAD_TTL
+            )
             return None
         cloud_code = _CLOUD_CODES.get(code)
         for prop in r["result"]["properties"]:
             if prop["code"] == cloud_code:
                 return prop["value"]
     except Exception as e:
-        log.error("cloud sensor error: %s", e)
+        _cloud_dead_until = time.time() + _CLOUD_DEAD_TTL
+        log.error("cloud sensor error: %s — skipping cloud for %ds", e, _CLOUD_DEAD_TTL)
     return None
 
 
 def get_sensor(sensor_type: str, code: str):
     cache_key = f"{sensor_type}:{code}"
-    # 0. short-term in-memory cache (заполняется каждые 30 мин планировщиком)
+    # 0. short-term in-memory cache (заполняется каждые 30 мин планировщиком);
+    # «данных нет» тоже кэшируется, но короче
     cached = _sensor_value_cache.get(cache_key)
-    if cached and time.time() - cached["ts"] < _SENSOR_CACHE_TTL:
-        return cached["value"]
+    if cached:
+        ttl = _SENSOR_CACHE_TTL if cached["value"] is not None else _SENSOR_NEGATIVE_TTL
+        if time.time() - cached["ts"] < ttl:
+            return cached["value"]
     # 1. local broadcast cache (если поймали broadcast)
     val = get_sensor_cached(sensor_type, code)
     if val is not None:
@@ -483,8 +504,9 @@ def get_sensor(sensor_type: str, code: str):
     # 3. cloud (основной для батарейных устройств)
     device_id = DEVICE_IDS.get(sensor_type, "")
     val = _get_sensor_cloud(device_id, code)
-    if val is not None:
-        _sensor_value_cache[cache_key] = {"value": val, "ts": time.time()}
+    # None тоже кэшируем (negative TTL) — иначе каждый статус в боте
+    # заново собирает все таймауты цепочки
+    _sensor_value_cache[cache_key] = {"value": val, "ts": time.time()}
     return val
 
 

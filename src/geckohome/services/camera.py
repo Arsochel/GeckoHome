@@ -300,23 +300,46 @@ def _hls_stalled() -> bool:
         return True
 
 
+# Бэкофф вотчдога: при недоступной камере ffmpeg умирает мгновенно, и рестарт
+# каждые 30с — бесконечный цикл спавна процессов и спам в логах.
+_hls_fail_streak = 0
+_hls_next_restart = 0.0
+_HLS_BACKOFF_AFTER = 3  # смертей подряд до включения бэкоффа
+_HLS_BACKOFF_SECONDS = 300
+
+
 async def ensure_alive(bin_path: str = "") -> None:
     """Watchdog: restart the HLS / mediamtx pipelines if they died or stalled.
 
     The RTSP feed can drop (camera reboot, network blip) and ffmpeg/mediamtx exit
     silently with no auto-recovery — unlike the motion monitor. Run periodically.
     """
+    global _hls_fail_streak, _hls_next_restart
     if not CAMERA_RTSP_URL:
         return
 
     hls_dead = _hls_proc is None or _hls_proc.poll() is not None
     if hls_dead or _hls_stalled():
-        log.warning(
-            "camera watchdog: HLS %s — restarting",
-            "process exited" if hls_dead else "segments stalled",
-        )
+        _hls_fail_streak += 1
+        if _hls_fail_streak > _HLS_BACKOFF_AFTER:
+            if time.time() < _hls_next_restart:
+                return  # камера лежит — не спавним ffmpeg каждые 30 секунд
+            _hls_next_restart = time.time() + _HLS_BACKOFF_SECONDS
+            log.warning(
+                "camera watchdog: HLS down %d checks in a row — retrying every %ds",
+                _hls_fail_streak,
+                _HLS_BACKOFF_SECONDS,
+            )
+        else:
+            log.warning(
+                "camera watchdog: HLS %s — restarting",
+                "process exited" if hls_dead else "segments stalled",
+            )
         await stop_hls()
         await start_hls()
+    else:
+        _hls_fail_streak = 0
+        _hls_next_restart = 0.0
 
     if bin_path and (_mediamtx_proc is None or _mediamtx_proc.poll() is not None):
         log.warning("camera watchdog: mediamtx process exited — restarting")
