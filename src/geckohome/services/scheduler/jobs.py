@@ -12,7 +12,7 @@ from geckohome.database import (
     save_schedule,
     vacuum_media_db,
 )
-from geckohome.services import camera, tuya
+from geckohome.services import camera, tunnel, tuya
 from geckohome.services.highlights import update_gecko_state
 from geckohome.services.scheduler._core import scheduler
 from geckohome.services.scheduler.backup import backup_db
@@ -68,6 +68,7 @@ async def load_schedules():
     scheduler.add_job(check_lamp_temperature, "interval", minutes=5, id="temp_guard")
     scheduler.add_job(update_gecko_state, "interval", minutes=2, id="gecko_state")
     scheduler.add_job(backup_db, "cron", hour=3, minute=0, id="db_backup")
+    scheduler.add_job(tunnel.restart, "cron", hour="6,18", minute=0, id="tunnel_restart")
     scheduler.add_job(check_feeding_alert, "cron", hour=20, minute=0, id="feeding_alert")
     scheduler.add_job(check_feeding_alert, "interval", hours=6, id="feeding_alert_interval")
     scheduler.add_job(check_cricket_alert, "cron", hour=18, minute=0, id="cricket_alert")

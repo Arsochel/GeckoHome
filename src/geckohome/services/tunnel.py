@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -60,7 +61,7 @@ def restart():
     try:
         with open(TUNNEL_PID_FILE) as f:
             pid = int(f.read().strip())
-        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+        os.kill(pid, signal.SIGTERM)
     except Exception:
         pass
     try:
