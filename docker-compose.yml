@@ -10,6 +10,9 @@ services:
   app:
     <<: *logging
     build: .
+    # tini как PID 1 — реапит осиротевшие процессы (иначе форкнутые cloudflared
+    # копились зомбями, т.к. в python:slim нет init)
+    init: true
     command: geckohome-web
     ports:
       - "${SERVER_PORT:-8000}:8000"
@@ -35,6 +38,7 @@ services:
   bot:
     <<: *logging
     build: .
+    init: true
     command: geckohome-bot
     volumes:
       - .:/app
